@@ -1,0 +1,1072 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<meta name="theme-color" content="#1a3a2e" />
+<meta name="color-scheme" content="dark" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>Tello Staff</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg-page: #0f2019;
+    --bg-app: #1a3a2e;
+    --bg-card: #204638;
+    --bg-elevated: #2a5644;
+    --bg-input: #17332a;
+    --border: #3a6b54;
+    --text: #eef6f1;
+    --text-muted: #a8c6b6;
+    --accent: #e8c15c;
+    --accent-contrast: #1a3a2e;
+    --positive: #6bd39a;
+    --danger: #e5726b;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg-page);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input { font-family: inherit; }
+  h1, h2, h3, h4 { margin: 0 0 8px; font-weight: 700; }
+  p { margin: 0 0 8px; color: var(--text-muted); }
+
+  /* ---------- Auth screen ---------- */
+  .auth-screen {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: radial-gradient(circle at 50% 0%, #234a3b, var(--bg-page) 70%);
+  }
+  .auth-card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--bg-app);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px 28px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+  .auth-logo {
+    font-size: 28px;
+    font-weight: 800;
+    text-align: center;
+    margin-bottom: 4px;
+    letter-spacing: 0.5px;
+  }
+  .auth-logo span { color: var(--accent); }
+  .auth-sub {
+    text-align: center;
+    font-size: 13px;
+    margin-bottom: 24px;
+  }
+  .auth-tabs {
+    display: flex;
+    background: var(--bg-input);
+    border-radius: 8px;
+    padding: 4px;
+    margin-bottom: 20px;
+  }
+  .auth-tab {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .auth-tab.active { background: var(--accent); color: var(--accent-contrast); }
+  #authForm { display: flex; flex-direction: column; gap: 12px; }
+  .link-btn {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    text-decoration: underline;
+    font-size: 13px;
+    margin-top: 14px;
+    cursor: pointer;
+    text-align: center;
+  }
+  .auth-msg {
+    margin-top: 14px;
+    font-size: 13px;
+    text-align: center;
+    min-height: 16px;
+    color: var(--positive);
+  }
+  .auth-msg.error { color: var(--danger); }
+  .config-warning {
+    margin-top: 18px;
+    padding: 10px 12px;
+    background: rgba(229, 114, 107, 0.15);
+    border: 1px solid var(--danger);
+    border-radius: 8px;
+    font-size: 12px;
+    color: #f3b3ae;
+  }
+
+  /* ---------- Inputs / buttons ---------- */
+  input[type="text"], input[type="email"], input[type="password"], input[type="time"], input[type="date"] {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    width: 100%;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input::placeholder { color: #6f9284; }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--accent-contrast);
+    border: none;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .btn-primary.full { width: 100%; }
+  .btn-outline {
+    background: var(--bg-elevated);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .btn-outline.small { padding: 6px 10px; font-size: 12px; }
+  .btn-icon {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    font-size: 18px;
+    cursor: pointer;
+  }
+  .btn-remove {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px 8px;
+  }
+  .btn-remove:hover { color: var(--danger); }
+
+  /* ---------- App shell ---------- */
+  .app { min-height: 100vh; display: flex; flex-direction: column; }
+  .app-header {
+    background: var(--bg-app);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+  .app-title { font-size: 18px; font-weight: 800; }
+  .app-title span { color: var(--accent); }
+  .app-main {
+    flex: 1;
+    padding: 16px;
+    padding-bottom: 90px;
+    max-width: 1100px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .view { display: none; }
+  .view.active { display: block; }
+  .view.placeholder-view.active { display: flex; }
+
+  .bottom-nav {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: var(--bg-app);
+    border-top: 1px solid var(--border);
+    display: flex;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+    z-index: 10;
+  }
+  .nav-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 4px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .nav-btn .nav-icon { font-size: 20px; }
+  .nav-btn.active { color: var(--accent); background: rgba(232, 193, 92, 0.1); }
+
+  .placeholder-view { align-items: center; justify-content: center; min-height: 50vh; }
+  .placeholder { text-align: center; color: var(--text-muted); max-width: 320px; }
+  .placeholder-icon { font-size: 40px; margin-bottom: 12px; }
+
+  /* ---------- Schedule view ---------- */
+  .week-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .week-label { font-weight: 700; font-size: 15px; flex: 1; text-align: center; min-width: 160px; }
+  .section-title { margin-top: 28px; margin-bottom: 12px; font-size: 16px; }
+
+  .manage-panel {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .manage-col { flex: 1; min-width: 220px; }
+  .manage-col h4 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+  .manage-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+  .manage-row { display: flex; align-items: center; gap: 6px; }
+  .manage-name-input { flex: 1; }
+
+  .grid-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+  table.schedule-grid {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 760px;
+  }
+  .schedule-grid th, .schedule-grid td {
+    border: 1px solid var(--border);
+    padding: 6px 8px;
+    text-align: left;
+    font-size: 13px;
+  }
+  .schedule-grid thead th {
+    background: var(--bg-elevated);
+    font-size: 12px;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .schedule-grid thead th.is-today { color: var(--accent); }
+  .day-date { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+  .schedule-grid th.row-head {
+    background: var(--bg-card);
+    font-weight: 700;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  .schedule-grid td.slot-label {
+    background: var(--bg-card);
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-size: 12px;
+  }
+  .schedule-grid td.slot-label.is-night { color: var(--accent); }
+  .schedule-grid td { background: var(--bg-page); min-width: 96px; }
+  .cell-input {
+    border: none !important;
+    background: transparent !important;
+    padding: 4px !important;
+    width: 100%;
+  }
+  .cell-input:focus { outline: 1px solid var(--accent); border-radius: 4px; }
+
+  /* ---------- Today view ---------- */
+  .today-date { font-size: 20px; font-weight: 800; margin-bottom: 16px; }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card h3 { font-size: 15px; }
+  .card h4.sub { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-top: 16px; }
+  .shift-row { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .shift-row:last-of-type { border-bottom: none; }
+  .shift-home { font-weight: 700; min-width: 110px; }
+  .shift-slots { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--text-muted); }
+  .filled { color: var(--text); font-weight: 600; }
+  .filled.night { color: var(--accent); }
+  .unfilled { color: var(--danger); font-weight: 600; }
+  .reliever-today-row { font-size: 13px; padding: 4px 0; }
+  .muted { color: var(--text-muted); font-size: 13px; }
+
+  .inline-form { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .inline-form input[name="title"], .inline-form input[name="name"] { flex: 2; min-width: 140px; }
+  .inline-form input[name="note"] { flex: 2; min-width: 140px; }
+  .inline-form input[type="time"], .inline-form input[type="date"] { flex: 1; min-width: 110px; }
+
+  .list { display: flex; flex-direction: column; gap: 8px; }
+  .reminder-item, .birthday-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .reminder-item.done .reminder-title { text-decoration: line-through; color: var(--text-muted); }
+  .reminder-body { flex: 1; }
+  .reminder-title { font-weight: 600; font-size: 14px; }
+  .due-time { color: var(--accent); font-weight: 700; font-size: 12px; }
+  .reminder-note { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+  .birthday-item { justify-content: space-between; }
+  .birthday-item.today { border-color: var(--accent); }
+  .birthday-tag { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+  .birthday-item.today .birthday-tag { color: var(--accent); font-weight: 700; }
+
+  @media (max-width: 600px) {
+    .app-main { padding: 12px; padding-bottom: 90px; }
+    .week-label { order: -1; width: 100%; }
+  }
+
+  @media print {
+    body { background: #fff; }
+    .no-print { display: none !important; }
+    .schedule-grid, .schedule-grid * {
+      color: #000 !important;
+      background: #fff !important;
+      border-color: #bbb !important;
+    }
+    .schedule-grid input { border: none !important; background: transparent !important; }
+    .section-title, .week-label { color: #000 !important; }
+    .app-main { padding-bottom: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div id="authScreen" class="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">Tello <span>Staff</span></div>
+    <div class="auth-sub">Care home operations</div>
+    <div class="auth-tabs">
+      <button data-action="auth-tab" data-mode="signin" class="auth-tab active">Sign In</button>
+      <button data-action="auth-tab" data-mode="signup" class="auth-tab">Sign Up</button>
+    </div>
+    <form id="authForm">
+      <input id="authEmail" type="email" name="email" placeholder="Email" required autocomplete="username" />
+      <input type="password" name="password" placeholder="Password" required autocomplete="current-password" minlength="6" />
+      <button type="submit" class="btn-primary full">Sign In</button>
+    </form>
+    <button class="link-btn" data-action="forgot-password">Forgot password?</button>
+    <div id="authMsg" class="auth-msg"></div>
+    <div id="configWarning" class="config-warning" style="display:none">
+      Supabase anon key is not configured yet. Open index.html and set
+      <code>SUPABASE_ANON_KEY</code> before this app can sign anyone in.
+    </div>
+  </div>
+</div>
+
+<div id="app" class="app" style="display:none">
+  <header class="app-header no-print">
+    <div class="app-title">Tello <span>Staff</span></div>
+    <button class="btn-outline small" data-action="sign-out">Sign Out</button>
+  </header>
+
+  <main class="app-main">
+    <div id="view-schedule" class="view"></div>
+
+    <div id="view-today" class="view"></div>
+
+    <div id="view-staff" class="view placeholder-view">
+      <div class="placeholder">
+        <div class="placeholder-icon">👥</div>
+        <h2>Staff</h2>
+        <p>Staff directory and management is coming in the next session.</p>
+      </div>
+    </div>
+
+    <div id="view-chat" class="view placeholder-view">
+      <div class="placeholder">
+        <div class="placeholder-icon">💬</div>
+        <h2>Chat</h2>
+        <p>Tello, the AI operations advisor, is coming in the next session.</p>
+      </div>
+    </div>
+  </main>
+
+  <nav class="bottom-nav no-print">
+    <button class="nav-btn" data-action="nav-tab" data-tab="schedule">
+      <span class="nav-icon">🗓️</span><span>Schedule</span>
+    </button>
+    <button class="nav-btn" data-action="nav-tab" data-tab="today">
+      <span class="nav-icon">☀️</span><span>Today</span>
+    </button>
+    <button class="nav-btn" data-action="nav-tab" data-tab="staff">
+      <span class="nav-icon">👥</span><span>Staff</span>
+    </button>
+    <button class="nav-btn" data-action="nav-tab" data-tab="chat">
+      <span class="nav-icon">💬</span><span>Chat</span>
+    </button>
+  </nav>
+</div>
+
+<script>
+// ============================================================================
+// CONFIG — fill in SUPABASE_ANON_KEY (Project Settings → API) before deploying.
+// REDIRECT_URL must stay the exact Cloudflare Pages production URL, since it
+// also has to be listed in Supabase → Authentication → URL Configuration.
+// ============================================================================
+const SUPABASE_URL = 'https://nwlhsshvqmbhemhxcran.supabase.co';
+const SUPABASE_ANON_KEY = 'PASTE_YOUR_NWLHS_ANON_KEY_HERE';
+const REDIRECT_URL = 'https://tello-staff.pages.dev';
+
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true },
+});
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+const state = {
+  user: null,
+  tab: 'schedule',
+  authMode: 'signin',
+  config: { homes: [], relievers: [] },
+  weekOffset: 0,
+  manageOpen: false,
+  scheduleCache: {},
+  reminders: [],
+  birthdays: [],
+};
+
+const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+let appEntered = false;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function esc(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function toISODate(d) {
+  const tz = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return tz.toISOString().slice(0, 10);
+}
+
+function startOfWeek(date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function addDays(date, n) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + n);
+  return d;
+}
+
+function fmtShort(date) {
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function fmtLong(date) {
+  return date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+function weekStartForOffset(offset) {
+  return addDays(startOfWeek(new Date()), offset * 7);
+}
+
+function defaultConfig() {
+  return {
+    homes: Array.from({ length: 8 }, (_, i) => ({ id: crypto.randomUUID(), name: `Home ${i + 1}` })),
+    relievers: Array.from({ length: 11 }, (_, i) => ({ id: crypto.randomUUID(), name: `Reliever ${i + 1}` })),
+  };
+}
+
+function emptyAssignments() {
+  return { homes: {}, relievers: {} };
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+function showAuthMessage(msg, isError = false) {
+  const el = document.getElementById('authMsg');
+  el.textContent = msg;
+  el.classList.toggle('error', isError);
+}
+const showAuthError = (msg) => showAuthMessage(msg, true);
+
+async function handleSignIn(email, password) {
+  showAuthMessage('Signing in…');
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) showAuthError(error.message);
+}
+
+async function handleSignUp(email, password) {
+  showAuthMessage('Creating account…');
+  const { error } = await sb.auth.signUp({
+    email, password,
+    options: { emailRedirectTo: REDIRECT_URL },
+  });
+  if (error) showAuthError(error.message);
+  else showAuthMessage('Check your email to confirm your account.');
+}
+
+async function handleForgotPassword(email) {
+  if (!email) { showAuthError('Enter your email above first.'); return; }
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: REDIRECT_URL });
+  if (error) showAuthError(error.message);
+  else showAuthMessage('Password reset email sent.');
+}
+
+async function handleSignOut() {
+  await sb.auth.signOut();
+}
+
+function handleAuthSubmit(form) {
+  const fd = new FormData(form);
+  const email = fd.get('email').trim();
+  const password = fd.get('password');
+  if (state.authMode === 'signup') handleSignUp(email, password);
+  else handleSignIn(email, password);
+}
+
+function renderAuth() {
+  document.querySelectorAll('.auth-tab').forEach((b) => b.classList.toggle('active', b.dataset.mode === state.authMode));
+  document.querySelector('#authForm button[type=submit]').textContent =
+    state.authMode === 'signup' ? 'Create Account' : 'Sign In';
+  document.getElementById('authMsg').textContent = '';
+  if (SUPABASE_ANON_KEY.startsWith('PASTE_')) {
+    document.getElementById('configWarning').style.display = 'block';
+  }
+}
+
+function showAuthScreen() {
+  state.user = null;
+  appEntered = false;
+  document.getElementById('authScreen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+  renderAuth();
+}
+
+async function enterApp(user) {
+  state.user = user;
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  if (!appEntered) {
+    appEntered = true;
+    await loadConfig(user.id);
+    await loadReminders();
+    await loadBirthdays();
+  }
+  renderApp();
+}
+
+// ---------------------------------------------------------------------------
+// Data — config (homes / reliever pool)
+// ---------------------------------------------------------------------------
+async function loadConfig(userId) {
+  const { data, error } = await sb.from('tello_staff_config').select('*').eq('user_id', userId).maybeSingle();
+  if (error) { console.error(error); }
+  if (data) {
+    state.config = {
+      homes: (data.homes && data.homes.length) ? data.homes : defaultConfig().homes,
+      relievers: (data.relievers && data.relievers.length) ? data.relievers : defaultConfig().relievers,
+    };
+  } else {
+    state.config = defaultConfig();
+    await saveConfig();
+  }
+}
+
+async function saveConfig() {
+  const { error } = await sb.from('tello_staff_config').upsert({
+    user_id: state.user.id,
+    homes: state.config.homes,
+    relievers: state.config.relievers,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) console.error(error);
+}
+
+// ---------------------------------------------------------------------------
+// Data — weekly schedule
+// ---------------------------------------------------------------------------
+async function loadWeek(weekStartStr) {
+  if (state.scheduleCache[weekStartStr]) return state.scheduleCache[weekStartStr];
+  const { data, error } = await sb.from('tello_staff_schedule').select('*')
+    .eq('user_id', state.user.id).eq('week_start', weekStartStr).maybeSingle();
+  if (error) console.error(error);
+  const assignments = (data && data.assignments) || emptyAssignments();
+  state.scheduleCache[weekStartStr] = assignments;
+  return assignments;
+}
+
+let saveScheduleTimer = null;
+function queueSaveWeek(weekStartStr) {
+  clearTimeout(saveScheduleTimer);
+  saveScheduleTimer = setTimeout(() => saveWeek(weekStartStr), 500);
+}
+
+async function saveWeek(weekStartStr) {
+  const assignments = state.scheduleCache[weekStartStr] || emptyAssignments();
+  const { error } = await sb.from('tello_staff_schedule').upsert({
+    user_id: state.user.id,
+    week_start: weekStartStr,
+    assignments,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'user_id,week_start' });
+  if (error) console.error(error);
+}
+
+// ---------------------------------------------------------------------------
+// Data — reminders
+// ---------------------------------------------------------------------------
+async function loadReminders() {
+  const { data, error } = await sb.from('tello_staff_reminders').select('*')
+    .eq('user_id', state.user.id).order('due_time', { ascending: true, nullsFirst: false });
+  if (error) console.error(error);
+  state.reminders = data || [];
+}
+
+async function addReminder(title, note, dueTime) {
+  const { error } = await sb.from('tello_staff_reminders')
+    .insert({ user_id: state.user.id, title, note: note || null, due_time: dueTime || null });
+  if (error) console.error(error);
+  await loadReminders();
+  renderToday();
+}
+
+async function toggleReminder(id, done) {
+  const { error } = await sb.from('tello_staff_reminders').update({ done }).eq('id', id);
+  if (error) console.error(error);
+  await loadReminders();
+  renderToday();
+}
+
+async function deleteReminder(id) {
+  const { error } = await sb.from('tello_staff_reminders').delete().eq('id', id);
+  if (error) console.error(error);
+  await loadReminders();
+  renderToday();
+}
+
+// ---------------------------------------------------------------------------
+// Data — birthdays
+// ---------------------------------------------------------------------------
+async function loadBirthdays() {
+  const { data, error } = await sb.from('tello_staff_birthdays').select('*')
+    .eq('user_id', state.user.id).order('name');
+  if (error) console.error(error);
+  state.birthdays = data || [];
+}
+
+async function addBirthday(name, month, day) {
+  const { error } = await sb.from('tello_staff_birthdays')
+    .insert({ user_id: state.user.id, name, bday_month: month, bday_day: day });
+  if (error) console.error(error);
+  await loadBirthdays();
+  renderToday();
+}
+
+async function deleteBirthday(id) {
+  const { error } = await sb.from('tello_staff_birthdays').delete().eq('id', id);
+  if (error) console.error(error);
+  await loadBirthdays();
+  renderToday();
+}
+
+// ---------------------------------------------------------------------------
+// Render — app shell
+// ---------------------------------------------------------------------------
+function renderApp() {
+  document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.tab));
+  document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+  const view = document.getElementById('view-' + state.tab);
+  if (view) view.classList.add('active');
+  if (state.tab === 'schedule') renderSchedule();
+  if (state.tab === 'today') renderToday();
+}
+
+// ---------------------------------------------------------------------------
+// Render — Schedule board
+// ---------------------------------------------------------------------------
+async function renderSchedule() {
+  const ws = weekStartForOffset(state.weekOffset);
+  const wsStr = toISODate(ws);
+  const assignments = await loadWeek(wsStr);
+  const days = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(ws, i) }));
+  const todayStr = toISODate(new Date());
+  const label = `${fmtShort(ws)} – ${fmtShort(addDays(ws, 6))}, ${addDays(ws, 6).getFullYear()}`;
+
+  const dayHeaderCells = days.map((d) => `
+    <th class="${toISODate(d.date) === todayStr ? 'is-today' : ''}">
+      ${d.label}<br><span class="day-date">${fmtShort(d.date)}</span>
+    </th>`).join('');
+
+  const homesRows = state.config.homes.map((home) => renderHomeRows(home, days, assignments)).join('');
+  const relieverRows = state.config.relievers.map((r) => renderRelieverRow(r, days, assignments)).join('');
+
+  const managePanel = state.manageOpen ? `
+    <div id="managePanel" class="manage-panel no-print">
+      <div class="manage-col">
+        <h4>Homes</h4>
+        <div class="manage-list">
+          ${state.config.homes.map((h) => `
+            <div class="manage-row">
+              <input type="text" class="manage-name-input" data-kind="home-name" data-id="${h.id}" value="${esc(h.name)}" />
+              <button class="btn-remove" data-action="remove-home" data-id="${h.id}">✕</button>
+            </div>`).join('')}
+        </div>
+        <button class="btn-outline" data-action="add-home">+ Add Home</button>
+      </div>
+      <div class="manage-col">
+        <h4>Reliever Pool</h4>
+        <div class="manage-list">
+          ${state.config.relievers.map((r) => `
+            <div class="manage-row">
+              <input type="text" class="manage-name-input" data-kind="reliever-name" data-id="${r.id}" value="${esc(r.name)}" />
+              <button class="btn-remove" data-action="remove-reliever" data-id="${r.id}">✕</button>
+            </div>`).join('')}
+        </div>
+        <button class="btn-outline" data-action="add-reliever">+ Add Reliever</button>
+      </div>
+    </div>` : '';
+
+  document.getElementById('view-schedule').innerHTML = `
+    <div class="week-bar no-print">
+      <button class="btn-icon" data-action="prev-week" title="Previous week">‹</button>
+      <div class="week-label">${label}</div>
+      <button class="btn-icon" data-action="next-week" title="Next week">›</button>
+      <button class="btn-outline" data-action="today-week">Today</button>
+      <button class="btn-outline" data-action="manage-toggle">⚙ Manage</button>
+      <button class="btn-outline" data-action="print">🖨 Print</button>
+    </div>
+    ${managePanel}
+    <div class="grid-wrap">
+      <table class="schedule-grid" id="homesTable">
+        <thead><tr><th class="row-head">Home</th><th class="row-head">Shift</th>${dayHeaderCells}</tr></thead>
+        <tbody>${homesRows}</tbody>
+      </table>
+    </div>
+    <h3 class="section-title">Reliever Pool</h3>
+    <div class="grid-wrap">
+      <table class="schedule-grid" id="relieversTable">
+        <thead><tr><th class="row-head" colspan="2">Reliever</th>${dayHeaderCells}</tr></thead>
+        <tbody>${relieverRows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderHomeRows(home, days, assignments) {
+  const slots = [['cg1', 'Caregiver 1'], ['cg2', 'Caregiver 2'], ['night', 'Night Shift']];
+  const homeData = assignments.homes[home.id] || {};
+  return slots.map(([slotKey, slotLabel], idx) => `
+    <tr>
+      ${idx === 0 ? `<th class="row-head" rowspan="3">${esc(home.name)}</th>` : ''}
+      <td class="slot-label ${slotKey === 'night' ? 'is-night' : ''}">${slotLabel}</td>
+      ${days.map((d) => {
+        const dayData = homeData[d.key] || {};
+        const val = dayData[slotKey] || '';
+        return `<td><input type="text" class="cell-input" data-kind="home" data-home="${home.id}" data-day="${d.key}" data-slot="${slotKey}" value="${esc(val)}" placeholder="—" /></td>`;
+      }).join('')}
+    </tr>`).join('');
+}
+
+function renderRelieverRow(reliever, days, assignments) {
+  const relData = assignments.relievers[reliever.id] || {};
+  return `
+    <tr>
+      <th class="row-head" colspan="2">${esc(reliever.name)}</th>
+      ${days.map((d) => {
+        const val = relData[d.key] || '';
+        return `<td><input type="text" class="cell-input" data-kind="reliever" data-reliever="${reliever.id}" data-day="${d.key}" value="${esc(val)}" placeholder="—" /></td>`;
+      }).join('')}
+    </tr>`;
+}
+
+// ---------------------------------------------------------------------------
+// Render — Today board
+// ---------------------------------------------------------------------------
+async function renderToday() {
+  const now = new Date();
+  const todayWs = toISODate(startOfWeek(now));
+  const assignments = await loadWeek(todayWs);
+  const dayKey = DAY_KEYS[(now.getDay() + 6) % 7];
+
+  const cell = (v, isNight) => v
+    ? `<span class="filled ${isNight ? 'night' : ''}">${esc(v)}</span>`
+    : `<span class="unfilled">unfilled</span>`;
+
+  const shiftRows = state.config.homes.map((home) => {
+    const d = (assignments.homes[home.id] || {})[dayKey] || {};
+    return `
+      <div class="shift-row">
+        <div class="shift-home">${esc(home.name)}</div>
+        <div class="shift-slots">
+          <div>CG1: ${cell(d.cg1)}</div>
+          <div>CG2: ${cell(d.cg2)}</div>
+          <div>Night: ${cell(d.night, true)}</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  const relieverToday = state.config.relievers
+    .map((r) => ({ r, v: (assignments.relievers[r.id] || {})[dayKey] }))
+    .filter((x) => x.v)
+    .map((x) => `<div class="reliever-today-row"><b>${esc(x.r.name)}</b>: ${esc(x.v)}</div>`)
+    .join('') || `<div class="muted">No relievers deployed today.</div>`;
+
+  document.getElementById('view-today').innerHTML = `
+    <div class="today-date">${fmtLong(now)}</div>
+
+    <section class="card">
+      <h3>Shift Summary</h3>
+      ${shiftRows}
+      <h4 class="sub">Relievers Deployed Today</h4>
+      ${relieverToday}
+    </section>
+
+    <section class="card">
+      <h3>Reminders</h3>
+      <form data-form="reminder" class="inline-form">
+        <input type="text" name="title" placeholder="Reminder title" required />
+        <input type="text" name="note" placeholder="Note (optional)" />
+        <input type="time" name="due_time" />
+        <button type="submit" class="btn-primary">+ Add</button>
+      </form>
+      <div class="list">${renderReminders()}</div>
+    </section>
+
+    <section class="card">
+      <h3>Birthdays</h3>
+      <form data-form="birthday" class="inline-form">
+        <input type="text" name="name" placeholder="Staff name" required />
+        <input type="date" name="date" required />
+        <button type="submit" class="btn-primary">+ Add</button>
+      </form>
+      <div class="list">${renderBirthdays(now)}</div>
+    </section>
+  `;
+}
+
+function renderReminders() {
+  if (!state.reminders.length) return `<div class="muted">No reminders yet.</div>`;
+  return state.reminders.map((r) => `
+    <div class="reminder-item ${r.done ? 'done' : ''}">
+      <input type="checkbox" data-kind="reminder-done" data-id="${r.id}" ${r.done ? 'checked' : ''} />
+      <div class="reminder-body">
+        <div class="reminder-title">${esc(r.title)}${r.due_time ? ` <span class="due-time">${esc(r.due_time)}</span>` : ''}</div>
+        ${r.note ? `<div class="reminder-note">${esc(r.note)}</div>` : ''}
+      </div>
+      <button class="btn-remove" data-action="reminder-delete" data-id="${r.id}">✕</button>
+    </div>`).join('');
+}
+
+function nextBirthdayDiff(month, day, now) {
+  const year = now.getFullYear();
+  const today0 = new Date(now); today0.setHours(0, 0, 0, 0);
+  let next = new Date(year, month - 1, day);
+  if (next < today0) next = new Date(year + 1, month - 1, day);
+  return Math.round((next - today0) / 86400000);
+}
+
+function renderBirthdays(now) {
+  if (!state.birthdays.length) return `<div class="muted">No birthdays added yet.</div>`;
+  const withDiff = state.birthdays
+    .map((b) => ({ b, diff: nextBirthdayDiff(b.bday_month, b.bday_day, now) }))
+    .sort((a, b) => a.diff - b.diff);
+  return withDiff.map(({ b, diff }) => {
+    const label = diff === 0 ? 'Today!' : diff === 1 ? 'Tomorrow' : `in ${diff} days`;
+    const monthName = new Date(2000, b.bday_month - 1, 1).toLocaleDateString('en-US', { month: 'short' });
+    return `
+      <div class="birthday-item ${diff === 0 ? 'today' : ''}">
+        <div><b>${esc(b.name)}</b> — ${monthName} ${b.bday_day}</div>
+        <div class="birthday-tag">${label}</div>
+        <button class="btn-remove" data-action="birthday-delete" data-id="${b.id}">✕</button>
+      </div>`;
+  }).join('');
+}
+
+// ---------------------------------------------------------------------------
+// Event delegation
+// ---------------------------------------------------------------------------
+function onGlobalClick(e) {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const action = btn.dataset.action;
+  switch (action) {
+    case 'nav-tab':
+      state.tab = btn.dataset.tab;
+      renderApp();
+      break;
+    case 'sign-out':
+      handleSignOut();
+      break;
+    case 'prev-week':
+      state.weekOffset -= 1;
+      renderSchedule();
+      break;
+    case 'next-week':
+      state.weekOffset += 1;
+      renderSchedule();
+      break;
+    case 'today-week':
+      state.weekOffset = 0;
+      renderSchedule();
+      break;
+    case 'manage-toggle':
+      state.manageOpen = !state.manageOpen;
+      renderSchedule();
+      break;
+    case 'print':
+      window.print();
+      break;
+    case 'add-home':
+      state.config.homes.push({ id: crypto.randomUUID(), name: `Home ${state.config.homes.length + 1}` });
+      saveConfig();
+      renderSchedule();
+      break;
+    case 'remove-home':
+      state.config.homes = state.config.homes.filter((h) => h.id !== btn.dataset.id);
+      saveConfig();
+      renderSchedule();
+      break;
+    case 'add-reliever':
+      state.config.relievers.push({ id: crypto.randomUUID(), name: `Reliever ${state.config.relievers.length + 1}` });
+      saveConfig();
+      renderSchedule();
+      break;
+    case 'remove-reliever':
+      state.config.relievers = state.config.relievers.filter((r) => r.id !== btn.dataset.id);
+      saveConfig();
+      renderSchedule();
+      break;
+    case 'reminder-delete':
+      deleteReminder(btn.dataset.id);
+      break;
+    case 'birthday-delete':
+      deleteBirthday(btn.dataset.id);
+      break;
+    case 'auth-tab':
+      state.authMode = btn.dataset.mode;
+      renderAuth();
+      break;
+    case 'forgot-password':
+      handleForgotPassword(document.getElementById('authEmail').value.trim());
+      break;
+  }
+}
+
+function onGlobalSubmit(e) {
+  const form = e.target;
+  if (form.dataset.form === 'reminder') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const title = fd.get('title').trim();
+    if (!title) return;
+    addReminder(title, fd.get('note').trim(), fd.get('due_time'));
+    form.reset();
+  } else if (form.dataset.form === 'birthday') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const name = fd.get('name').trim();
+    const dateVal = fd.get('date');
+    if (!name || !dateVal) return;
+    const [, m, d] = dateVal.split('-').map(Number);
+    addBirthday(name, m, d);
+    form.reset();
+  } else if (form.id === 'authForm') {
+    e.preventDefault();
+    handleAuthSubmit(form);
+  }
+}
+
+function onGlobalInput(e) {
+  const t = e.target;
+  if (!t.classList.contains('cell-input')) return;
+  const ws = weekStartForOffset(state.weekOffset);
+  const wsStr = toISODate(ws);
+  const assignments = state.scheduleCache[wsStr] || (state.scheduleCache[wsStr] = emptyAssignments());
+  if (t.dataset.kind === 'home') {
+    const { home, day, slot } = t.dataset;
+    assignments.homes[home] = assignments.homes[home] || {};
+    assignments.homes[home][day] = assignments.homes[home][day] || {};
+    assignments.homes[home][day][slot] = t.value;
+  } else if (t.dataset.kind === 'reliever') {
+    const { reliever, day } = t.dataset;
+    assignments.relievers[reliever] = assignments.relievers[reliever] || {};
+    assignments.relievers[reliever][day] = t.value;
+  }
+  queueSaveWeek(wsStr);
+}
+
+function onGlobalChange(e) {
+  const t = e.target;
+  if (t.dataset.kind === 'reminder-done') {
+    toggleReminder(t.dataset.id, t.checked);
+  } else if (t.dataset.kind === 'home-name') {
+    const home = state.config.homes.find((h) => h.id === t.dataset.id);
+    if (home) { home.name = t.value; saveConfig(); renderSchedule(); }
+  } else if (t.dataset.kind === 'reliever-name') {
+    const rel = state.config.relievers.find((r) => r.id === t.dataset.id);
+    if (rel) { rel.name = t.value; saveConfig(); renderSchedule(); }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+function init() {
+  document.addEventListener('click', onGlobalClick);
+  document.addEventListener('submit', onGlobalSubmit);
+  document.addEventListener('input', onGlobalInput);
+  document.addEventListener('change', onGlobalChange);
+
+  sb.auth.onAuthStateChange((_event, session) => {
+    if (session && session.user) enterApp(session.user);
+    else showAuthScreen();
+  });
+}
+
+init();
+</script>
+</body>
+</html>
