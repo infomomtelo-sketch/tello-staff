@@ -122,7 +122,7 @@
   }
 
   /* ---------- Inputs / buttons ---------- */
-  input[type="text"], input[type="email"], input[type="password"], input[type="time"], input[type="date"] {
+  input[type="text"], input[type="email"], input[type="password"], input[type="time"], input[type="date"], select {
     background: var(--bg-input);
     border: 1px solid var(--border);
     color: var(--text);
@@ -131,7 +131,7 @@
     font-size: 14px;
     width: 100%;
   }
-  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   input::placeholder { color: #6f9284; }
 
   .btn-primary {
@@ -314,6 +314,9 @@
     background: transparent !important;
     padding: 4px !important;
     width: 100%;
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
   }
   .cell-input:focus { outline: 1px solid var(--accent); border-radius: 4px; }
 
@@ -376,7 +379,7 @@
       background: #fff !important;
       border-color: #bbb !important;
     }
-    .schedule-grid input { border: none !important; background: transparent !important; }
+    .schedule-grid input, .schedule-grid select { border: none !important; background: transparent !important; appearance: none; -webkit-appearance: none; }
     .section-title, .week-label { color: #000 !important; }
     .app-main { padding-bottom: 0; }
   }
@@ -420,13 +423,7 @@
 
     <div id="view-today" class="view"></div>
 
-    <div id="view-staff" class="view placeholder-view">
-      <div class="placeholder">
-        <div class="placeholder-icon">👥</div>
-        <h2>Staff</h2>
-        <p>Staff directory and management is coming in the next session.</p>
-      </div>
-    </div>
+    <div id="view-staff" class="view"></div>
 
     <div id="view-chat" class="view placeholder-view">
       <div class="placeholder">
@@ -478,6 +475,13 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
 });
 
+// Separate client, session not persisted — used only to sign up a new
+// caregiver/admin login from the Staff tab without swapping out the
+// currently signed-in admin's session on the main `sb` client.
+const sbProvision = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -494,6 +498,8 @@ const state = {
   scheduleCache: {},
   reminders: [],
   birthdays: [],
+  staff: [],
+  staffLoginFormId: null,
 };
 
 function isAdmin() { return state.role === 'admin'; }
@@ -615,6 +621,8 @@ function showAuthScreen() {
   state.orgId = null;
   state.staffMemberId = null;
   state.scheduleCache = {};
+  state.staff = [];
+  state.staffLoginFormId = null;
   appEntered = false;
   document.getElementById('authScreen').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
@@ -629,6 +637,7 @@ async function enterApp(user) {
     appEntered = true;
     await loadRole(user);
     await loadConfig();
+    await loadStaff();
     await loadReminders();
     await loadBirthdays();
   }
@@ -694,6 +703,23 @@ async function loadWeek(weekStartStr) {
   return assignments;
 }
 
+function setCellValue(dataset, value) {
+  const ws = weekStartForOffset(state.weekOffset);
+  const wsStr = toISODate(ws);
+  const assignments = state.scheduleCache[wsStr] || (state.scheduleCache[wsStr] = emptyAssignments());
+  if (dataset.kind === 'home') {
+    const { home, day, slot } = dataset;
+    assignments.homes[home] = assignments.homes[home] || {};
+    assignments.homes[home][day] = assignments.homes[home][day] || {};
+    assignments.homes[home][day][slot] = value;
+  } else if (dataset.kind === 'reliever') {
+    const { reliever, day } = dataset;
+    assignments.relievers[reliever] = assignments.relievers[reliever] || {};
+    assignments.relievers[reliever][day] = value;
+  }
+  queueSaveWeek(wsStr);
+}
+
 let saveScheduleTimer = null;
 function queueSaveWeek(weekStartStr) {
   if (!isAdmin()) return;
@@ -749,6 +775,69 @@ async function deleteReminder(id) {
 }
 
 // ---------------------------------------------------------------------------
+// Data — staff directory
+// ---------------------------------------------------------------------------
+async function loadStaff() {
+  const { data, error } = await sb.from('tello_staff_members').select('*')
+    .eq('owner_id', state.orgId).order('name');
+  if (error) console.error(error);
+  state.staff = data || [];
+}
+
+async function addStaffMember(name, role, homeId) {
+  if (!isAdmin()) return;
+  const { error } = await sb.from('tello_staff_members')
+    .insert({ owner_id: state.orgId, name, role: role || 'caregiver', home_id: homeId || null });
+  if (error) { console.error(error); alert('Could not add staff member: ' + error.message); return; }
+  await loadStaff();
+  renderStaff();
+}
+
+async function updateStaffMember(id, patch) {
+  if (!isAdmin()) return;
+  const { error } = await sb.from('tello_staff_members').update(patch).eq('id', id);
+  if (error) { console.error(error); return; }
+  const s = state.staff.find((x) => x.id === id);
+  if (s) Object.assign(s, patch);
+  if (patch.role && s && s.auth_user_id) {
+    const { error: roleErr } = await sb.from('tello_staff_roles').update({ role: patch.role }).eq('user_id', s.auth_user_id);
+    if (roleErr) console.error(roleErr);
+  }
+}
+
+async function deleteStaffMember(id) {
+  if (!isAdmin()) return;
+  if (!confirm('Remove this staff member from the directory? Their login (if any) is kept but unlinked.')) return;
+  const { error } = await sb.from('tello_staff_members').delete().eq('id', id);
+  if (error) { console.error(error); return; }
+  await loadStaff();
+  renderStaff();
+}
+
+async function createStaffLogin(staffId, email, password) {
+  if (!isAdmin()) return;
+  const { data, error } = await sbProvision.auth.signUp({ email, password });
+  if (error) { alert('Could not create login: ' + error.message); return; }
+  const newUserId = data && data.user && data.user.id;
+  if (!newUserId) {
+    alert('Account creation did not return a user id — check the Supabase project\'s email confirmation settings.');
+    return;
+  }
+  const staffMember = state.staff.find((s) => s.id === staffId);
+  const role = (staffMember && staffMember.role) || 'caregiver';
+  const { error: roleErr } = await sb.from('tello_staff_roles')
+    .insert({ user_id: newUserId, owner_id: state.orgId, role, staff_member_id: staffId });
+  if (roleErr) { console.error(roleErr); alert('Login created, but linking the role failed: ' + roleErr.message); }
+  const { error: memberErr } = await sb.from('tello_staff_members')
+    .update({ auth_user_id: newUserId, email }).eq('id', staffId);
+  if (memberErr) console.error(memberErr);
+  state.staffLoginFormId = null;
+  await loadStaff();
+  renderStaff();
+  alert(`Login created for ${email}.\n\nTemporary password: ${password}\n\nShare this with them directly — they can change it later via "Forgot password?" on the sign-in screen.`);
+}
+
+// ---------------------------------------------------------------------------
 // Data — birthdays
 // ---------------------------------------------------------------------------
 async function loadBirthdays() {
@@ -796,6 +885,7 @@ function renderApp() {
   if (view) view.classList.add('active');
   if (state.tab === 'schedule') renderSchedule();
   if (state.tab === 'today') renderToday();
+  if (state.tab === 'staff') renderStaff();
 }
 
 // ---------------------------------------------------------------------------
@@ -890,7 +980,7 @@ function renderHomeRows(home, days, assignments) {
       ${days.map((d) => {
         const dayData = homeData[d.key] || {};
         const val = dayData[slotKey] || '';
-        return `<td><input type="text" class="cell-input" data-kind="home" data-home="${home.id}" data-day="${d.key}" data-slot="${slotKey}" value="${esc(val)}" placeholder="—" /></td>`;
+        return `<td>${staffCell({ kind: 'home', home: home.id, day: d.key, slot: slotKey }, val)}</td>`;
       }).join('')}
     </tr>`).join('');
 }
@@ -902,9 +992,94 @@ function renderRelieverRow(reliever, days, assignments) {
       <th class="row-head" colspan="2">${esc(reliever.name)}</th>
       ${days.map((d) => {
         const val = relData[d.key] || '';
-        return `<td><input type="text" class="cell-input" data-kind="reliever" data-reliever="${reliever.id}" data-day="${d.key}" value="${esc(val)}" placeholder="—" /></td>`;
+        return `<td>${staffCell({ kind: 'reliever', reliever: reliever.id, day: d.key }, val)}</td>`;
       }).join('')}
     </tr>`;
+}
+
+// Schedule Board cells are dropdowns sourced from the staff directory, with
+// a "Custom name…" escape hatch for names not yet in the directory (and a
+// synthetic option so any pre-existing free-text value still displays).
+function staffCell(dataAttrs, val) {
+  const dataStr = Object.entries(dataAttrs).map(([k, v]) => `data-${k}="${esc(v)}"`).join(' ');
+  const names = state.staff.map((s) => s.name);
+  const knownOrBlank = val === '' || names.includes(val);
+  const opts = [`<option value="">—</option>`];
+  names.forEach((n) => opts.push(`<option value="${esc(n)}" ${n === val ? 'selected' : ''}>${esc(n)}</option>`));
+  if (!knownOrBlank) opts.push(`<option value="${esc(val)}" selected>${esc(val)}</option>`);
+  opts.push(`<option value="__custom__">+ Custom name…</option>`);
+  return `<select class="cell-input" ${dataStr}>${opts.join('')}</select>`;
+}
+
+// ---------------------------------------------------------------------------
+// Render — Staff directory
+// ---------------------------------------------------------------------------
+function renderStaff() {
+  const homeOptions = state.config.homes.map((h) => `<option value="${h.id}">${esc(h.name)}</option>`).join('');
+
+  document.getElementById('view-staff').innerHTML = `
+    <h3 class="section-title" style="margin-top:0;">Add Staff Member</h3>
+    <div class="manage-panel no-print">
+      <div class="manage-col" style="flex:1 1 100%;">
+        <form data-form="add-staff" class="inline-form">
+          <input type="text" name="name" placeholder="Full name" required />
+          <select name="role">
+            <option value="caregiver">Caregiver</option>
+            <option value="admin">Admin</option>
+          </select>
+          <select name="home_id">
+            <option value="">Unassigned</option>
+            ${homeOptions}
+          </select>
+          <button type="submit" class="btn-primary">+ Add Staff</button>
+        </form>
+      </div>
+    </div>
+
+    <h3 class="section-title">Staff (${state.staff.length})</h3>
+    <div class="list">
+      ${state.staff.length ? state.staff.map(renderStaffRow).join('') : `<div class="muted">No staff added yet.</div>`}
+    </div>
+  `;
+}
+
+function renderStaffRow(s) {
+  const homeOptions = state.config.homes.map((h) =>
+    `<option value="${h.id}" ${s.home_id === h.id ? 'selected' : ''}>${esc(h.name)}</option>`).join('');
+  return `
+    <div class="card" style="padding:12px 14px; margin-bottom:10px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        <input type="text" class="manage-name-input" style="flex:2; min-width:140px;" data-kind="staff-name" data-id="${s.id}" value="${esc(s.name)}" />
+        <select data-kind="staff-role" data-id="${s.id}">
+          <option value="caregiver" ${s.role === 'caregiver' ? 'selected' : ''}>Caregiver</option>
+          <option value="admin" ${s.role === 'admin' ? 'selected' : ''}>Admin</option>
+        </select>
+        <select data-kind="staff-home" data-id="${s.id}">
+          <option value="">Unassigned</option>
+          ${homeOptions}
+        </select>
+        <button class="btn-remove" data-action="staff-delete" data-id="${s.id}" title="Remove">✕</button>
+      </div>
+      <div style="margin-top:8px;">
+        ${renderStaffLoginArea(s)}
+      </div>
+    </div>`;
+}
+
+function renderStaffLoginArea(s) {
+  if (s.auth_user_id) {
+    return `<span class="muted">🔑 Login active${s.email ? `: ${esc(s.email)}` : ''}</span>`;
+  }
+  if (state.staffLoginFormId === s.id) {
+    return `
+      <form data-form="staff-login" data-id="${s.id}" class="inline-form">
+        <input type="email" name="email" placeholder="Login email" required />
+        <input type="text" name="password" placeholder="Temporary password (6+ chars)" minlength="6" required />
+        <button type="submit" class="btn-primary">Create Login</button>
+        <button type="button" class="btn-outline" data-action="staff-login-cancel">Cancel</button>
+      </form>`;
+  }
+  return `<button class="btn-outline small" data-action="staff-create-login" data-id="${s.id}">+ Create Login</button>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,6 +1247,17 @@ function onGlobalClick(e) {
     case 'birthday-delete':
       deleteBirthday(btn.dataset.id);
       break;
+    case 'staff-delete':
+      deleteStaffMember(btn.dataset.id);
+      break;
+    case 'staff-create-login':
+      state.staffLoginFormId = btn.dataset.id;
+      renderStaff();
+      break;
+    case 'staff-login-cancel':
+      state.staffLoginFormId = null;
+      renderStaff();
+      break;
     case 'auth-tab':
       state.authMode = btn.dataset.mode;
       renderAuth();
@@ -1100,33 +1286,38 @@ function onGlobalSubmit(e) {
     const [, m, d] = dateVal.split('-').map(Number);
     addBirthday(name, m, d);
     form.reset();
+  } else if (form.dataset.form === 'add-staff') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const name = fd.get('name').trim();
+    if (!name) return;
+    addStaffMember(name, fd.get('role'), fd.get('home_id') || null);
+    form.reset();
+  } else if (form.dataset.form === 'staff-login') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const email = fd.get('email').trim();
+    const password = fd.get('password');
+    if (!email || !password) return;
+    createStaffLogin(form.dataset.id, email, password);
   } else if (form.id === 'authForm') {
     e.preventDefault();
     handleAuthSubmit(form);
   }
 }
 
-function onGlobalInput(e) {
-  const t = e.target;
-  if (!t.classList.contains('cell-input')) return;
-  const ws = weekStartForOffset(state.weekOffset);
-  const wsStr = toISODate(ws);
-  const assignments = state.scheduleCache[wsStr] || (state.scheduleCache[wsStr] = emptyAssignments());
-  if (t.dataset.kind === 'home') {
-    const { home, day, slot } = t.dataset;
-    assignments.homes[home] = assignments.homes[home] || {};
-    assignments.homes[home][day] = assignments.homes[home][day] || {};
-    assignments.homes[home][day][slot] = t.value;
-  } else if (t.dataset.kind === 'reliever') {
-    const { reliever, day } = t.dataset;
-    assignments.relievers[reliever] = assignments.relievers[reliever] || {};
-    assignments.relievers[reliever][day] = t.value;
-  }
-  queueSaveWeek(wsStr);
-}
-
 function onGlobalChange(e) {
   const t = e.target;
+  if (t.classList.contains('cell-input')) {
+    if (t.value === '__custom__') {
+      const name = window.prompt('Staff name:', '');
+      if (name && name.trim()) setCellValue(t.dataset, name.trim());
+      renderSchedule();
+      return;
+    }
+    setCellValue(t.dataset, t.value);
+    return;
+  }
   if (t.dataset.kind === 'reminder-done') {
     toggleReminder(t.dataset.id, t.checked);
   } else if (t.dataset.kind === 'home-name') {
@@ -1135,6 +1326,12 @@ function onGlobalChange(e) {
   } else if (t.dataset.kind === 'reliever-name') {
     const rel = state.config.relievers.find((r) => r.id === t.dataset.id);
     if (rel) { rel.name = t.value; saveConfig(); renderSchedule(); }
+  } else if (t.dataset.kind === 'staff-name') {
+    updateStaffMember(t.dataset.id, { name: t.value });
+  } else if (t.dataset.kind === 'staff-role') {
+    updateStaffMember(t.dataset.id, { role: t.value }).then(renderStaff);
+  } else if (t.dataset.kind === 'staff-home') {
+    updateStaffMember(t.dataset.id, { home_id: t.value || null });
   }
 }
 
@@ -1144,7 +1341,6 @@ function onGlobalChange(e) {
 function init() {
   document.addEventListener('click', onGlobalClick);
   document.addEventListener('submit', onGlobalSubmit);
-  document.addEventListener('input', onGlobalInput);
   document.addEventListener('change', onGlobalChange);
 
   sb.auth.onAuthStateChange((_event, session) => {

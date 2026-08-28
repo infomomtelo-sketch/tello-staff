@@ -112,6 +112,43 @@ create policy "birthdays write" on tello_staff_birthdays
   for all using (user_id = tello_staff_org() and tello_staff_role() = 'admin')
   with check (user_id = tello_staff_org() and tello_staff_role() = 'admin');
 
+-- ===========================================================================
+-- Part 2 — Staff Directory
+-- ===========================================================================
+-- `home_id` is a soft reference to an entry in tello_staff_config.homes
+-- (which lives in a jsonb array, so it can't be a real foreign key) —
+-- resolved client-side against the caller's current config.
+
+create table if not exists tello_staff_members (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  role text not null default 'caregiver' check (role in ('admin', 'caregiver')),
+  home_id uuid,
+  auth_user_id uuid references auth.users(id) on delete set null,
+  email text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_tello_staff_members_owner on tello_staff_members(owner_id);
+
+alter table tello_staff_members enable row level security;
+
+drop policy if exists "staff select" on tello_staff_members;
+create policy "staff select" on tello_staff_members
+  for select using (owner_id = tello_staff_org());
+
+drop policy if exists "staff write" on tello_staff_members;
+create policy "staff write" on tello_staff_members
+  for all using (owner_id = tello_staff_org() and tello_staff_role() = 'admin')
+  with check (owner_id = tello_staff_org() and tello_staff_role() = 'admin');
+
+-- Now that tello_staff_members exists, wire up the FK left dangling in Part 1.
+alter table tello_staff_roles drop constraint if exists tello_staff_roles_staff_member_id_fkey;
+alter table tello_staff_roles add constraint tello_staff_roles_staff_member_id_fkey
+  foreign key (staff_member_id) references tello_staff_members(id) on delete set null;
+
 select
   (select count(*) from information_schema.tables
-   where table_schema = 'public' and table_name = 'tello_staff_roles') as roles_table_created;
+   where table_schema = 'public' and table_name = 'tello_staff_members') as staff_table_created;
