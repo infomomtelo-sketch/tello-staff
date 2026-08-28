@@ -18,14 +18,29 @@ Single static file (`index.html`), no build step — matches the other RunP8 app
   (placeholder) — both land in a future session.
 - Auth: Supabase email/password sign in, sign up, and password reset.
 
+## Session 2 (in progress) — Part 1: Roles
+
+- Two roles: **admin** (full access, unchanged UI) and **caregiver** (Schedule,
+  Today's Board, Day Off — the latter two still placeholders pending Parts 2–3).
+- New `tello_staff_roles` table maps each signed-in account to an org
+  (`owner_id`, the admin's uid) and a role. A brand-new account self-bootstraps
+  as the admin of its own org on first login.
+- The four Session 1 tables are now scoped by org instead of raw `auth.uid()`:
+  anyone in the org can read; only admins can write. No data migration needed
+  for the existing admin account.
+- Caregiver logins will be provisioned by the admin from the Staff tab in Part
+  2 (a secondary, non-session-clobbering Supabase client calls `auth.signUp`
+  so provisioning a caregiver doesn't sign the admin out).
+
 ## Setup
 
 ### 1. Database (Supabase project `nwlhsshvqmbhemhxcran`)
 
-Paste `schema.sql` into the Supabase SQL editor and run it. It creates four
-tables (`tello_staff_config`, `tello_staff_schedule`, `tello_staff_reminders`,
-`tello_staff_birthdays`), each with RLS scoped to `auth.uid()`, and is safe to
-re-run.
+Paste `schema.sql` into the Supabase SQL editor and run it, then paste and run
+`schema_v2.sql` (append new sections to it as Session 2 progresses). Together
+they create `tello_staff_config`, `tello_staff_schedule`,
+`tello_staff_reminders`, `tello_staff_birthdays`, and `tello_staff_roles`, all
+RLS-scoped per org, and are safe to re-run.
 
 ### 2. Fill in the anon key
 

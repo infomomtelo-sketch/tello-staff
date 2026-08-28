@@ -230,6 +230,19 @@
   }
   .nav-btn .nav-icon { font-size: 20px; }
   .nav-btn.active { color: var(--accent); background: rgba(232, 193, 92, 0.1); }
+  .nav-btn.nav-hidden { display: none; }
+
+  .role-badge {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--accent);
+    background: rgba(232, 193, 92, 0.15);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: 3px 10px;
+  }
 
   .placeholder-view { align-items: center; justify-content: center; min-height: 50vh; }
   .placeholder { text-align: center; color: var(--text-muted); max-width: 320px; }
@@ -396,7 +409,10 @@
 <div id="app" class="app" style="display:none">
   <header class="app-header no-print">
     <div class="app-title">Tello <span>Staff</span></div>
-    <button class="btn-outline small" data-action="sign-out">Sign Out</button>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <span id="roleBadge" class="role-badge" style="display:none">Caregiver</span>
+      <button class="btn-outline small" data-action="sign-out">Sign Out</button>
+    </div>
   </header>
 
   <main class="app-main">
@@ -419,6 +435,14 @@
         <p>Tello, the AI operations advisor, is coming in the next session.</p>
       </div>
     </div>
+
+    <div id="view-dayoff" class="view placeholder-view">
+      <div class="placeholder">
+        <div class="placeholder-icon">📋</div>
+        <h2>Day Off Requests</h2>
+        <p>Requesting a day off is coming later in this session.</p>
+      </div>
+    </div>
   </main>
 
   <nav class="bottom-nav no-print">
@@ -428,11 +452,14 @@
     <button class="nav-btn" data-action="nav-tab" data-tab="today">
       <span class="nav-icon">☀️</span><span>Today</span>
     </button>
-    <button class="nav-btn" data-action="nav-tab" data-tab="staff">
+    <button class="nav-btn" data-action="nav-tab" data-tab="staff" data-role="admin">
       <span class="nav-icon">👥</span><span>Staff</span>
     </button>
-    <button class="nav-btn" data-action="nav-tab" data-tab="chat">
+    <button class="nav-btn" data-action="nav-tab" data-tab="chat" data-role="admin">
       <span class="nav-icon">💬</span><span>Chat</span>
+    </button>
+    <button class="nav-btn" data-action="nav-tab" data-tab="dayoff" data-role="caregiver">
+      <span class="nav-icon">📋</span><span>Day Off</span>
     </button>
   </nav>
 </div>
@@ -456,6 +483,9 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 // ---------------------------------------------------------------------------
 const state = {
   user: null,
+  role: 'admin',
+  orgId: null,
+  staffMemberId: null,
   tab: 'schedule',
   authMode: 'signin',
   config: { homes: [], relievers: [] },
@@ -465,6 +495,8 @@ const state = {
   reminders: [],
   birthdays: [],
 };
+
+function isAdmin() { return state.role === 'admin'; }
 
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -579,6 +611,10 @@ function renderAuth() {
 
 function showAuthScreen() {
   state.user = null;
+  state.role = 'admin';
+  state.orgId = null;
+  state.staffMemberId = null;
+  state.scheduleCache = {};
   appEntered = false;
   document.getElementById('authScreen').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
@@ -591,7 +627,8 @@ async function enterApp(user) {
   document.getElementById('app').style.display = '';
   if (!appEntered) {
     appEntered = true;
-    await loadConfig(user.id);
+    await loadRole(user);
+    await loadConfig();
     await loadReminders();
     await loadBirthdays();
   }
@@ -599,10 +636,28 @@ async function enterApp(user) {
 }
 
 // ---------------------------------------------------------------------------
+// Data — role / org
+// ---------------------------------------------------------------------------
+async function loadRole(user) {
+  let { data, error } = await sb.from('tello_staff_roles').select('*').eq('user_id', user.id).maybeSingle();
+  if (error) console.error(error);
+  if (!data) {
+    const inserted = await sb.from('tello_staff_roles')
+      .insert({ user_id: user.id, owner_id: user.id, role: 'admin' })
+      .select().single();
+    if (inserted.error) console.error(inserted.error);
+    data = inserted.data;
+  }
+  state.role = (data && data.role) || 'admin';
+  state.orgId = (data && data.owner_id) || user.id;
+  state.staffMemberId = (data && data.staff_member_id) || null;
+}
+
+// ---------------------------------------------------------------------------
 // Data — config (homes / reliever pool)
 // ---------------------------------------------------------------------------
-async function loadConfig(userId) {
-  const { data, error } = await sb.from('tello_staff_config').select('*').eq('user_id', userId).maybeSingle();
+async function loadConfig() {
+  const { data, error } = await sb.from('tello_staff_config').select('*').eq('user_id', state.orgId).maybeSingle();
   if (error) { console.error(error); }
   if (data) {
     state.config = {
@@ -616,8 +671,9 @@ async function loadConfig(userId) {
 }
 
 async function saveConfig() {
+  if (!isAdmin()) return;
   const { error } = await sb.from('tello_staff_config').upsert({
-    user_id: state.user.id,
+    user_id: state.orgId,
     homes: state.config.homes,
     relievers: state.config.relievers,
     updated_at: new Date().toISOString(),
@@ -631,7 +687,7 @@ async function saveConfig() {
 async function loadWeek(weekStartStr) {
   if (state.scheduleCache[weekStartStr]) return state.scheduleCache[weekStartStr];
   const { data, error } = await sb.from('tello_staff_schedule').select('*')
-    .eq('user_id', state.user.id).eq('week_start', weekStartStr).maybeSingle();
+    .eq('user_id', state.orgId).eq('week_start', weekStartStr).maybeSingle();
   if (error) console.error(error);
   const assignments = (data && data.assignments) || emptyAssignments();
   state.scheduleCache[weekStartStr] = assignments;
@@ -640,14 +696,16 @@ async function loadWeek(weekStartStr) {
 
 let saveScheduleTimer = null;
 function queueSaveWeek(weekStartStr) {
+  if (!isAdmin()) return;
   clearTimeout(saveScheduleTimer);
   saveScheduleTimer = setTimeout(() => saveWeek(weekStartStr), 500);
 }
 
 async function saveWeek(weekStartStr) {
+  if (!isAdmin()) return;
   const assignments = state.scheduleCache[weekStartStr] || emptyAssignments();
   const { error } = await sb.from('tello_staff_schedule').upsert({
-    user_id: state.user.id,
+    user_id: state.orgId,
     week_start: weekStartStr,
     assignments,
     updated_at: new Date().toISOString(),
@@ -660,20 +718,22 @@ async function saveWeek(weekStartStr) {
 // ---------------------------------------------------------------------------
 async function loadReminders() {
   const { data, error } = await sb.from('tello_staff_reminders').select('*')
-    .eq('user_id', state.user.id).order('due_time', { ascending: true, nullsFirst: false });
+    .eq('user_id', state.orgId).order('due_time', { ascending: true, nullsFirst: false });
   if (error) console.error(error);
   state.reminders = data || [];
 }
 
 async function addReminder(title, note, dueTime) {
+  if (!isAdmin()) return;
   const { error } = await sb.from('tello_staff_reminders')
-    .insert({ user_id: state.user.id, title, note: note || null, due_time: dueTime || null });
+    .insert({ user_id: state.orgId, title, note: note || null, due_time: dueTime || null });
   if (error) console.error(error);
   await loadReminders();
   renderToday();
 }
 
 async function toggleReminder(id, done) {
+  if (!isAdmin()) return;
   const { error } = await sb.from('tello_staff_reminders').update({ done }).eq('id', id);
   if (error) console.error(error);
   await loadReminders();
@@ -681,6 +741,7 @@ async function toggleReminder(id, done) {
 }
 
 async function deleteReminder(id) {
+  if (!isAdmin()) return;
   const { error } = await sb.from('tello_staff_reminders').delete().eq('id', id);
   if (error) console.error(error);
   await loadReminders();
@@ -692,20 +753,22 @@ async function deleteReminder(id) {
 // ---------------------------------------------------------------------------
 async function loadBirthdays() {
   const { data, error } = await sb.from('tello_staff_birthdays').select('*')
-    .eq('user_id', state.user.id).order('name');
+    .eq('user_id', state.orgId).order('name');
   if (error) console.error(error);
   state.birthdays = data || [];
 }
 
 async function addBirthday(name, month, day) {
+  if (!isAdmin()) return;
   const { error } = await sb.from('tello_staff_birthdays')
-    .insert({ user_id: state.user.id, name, bday_month: month, bday_day: day });
+    .insert({ user_id: state.orgId, name, bday_month: month, bday_day: day });
   if (error) console.error(error);
   await loadBirthdays();
   renderToday();
 }
 
 async function deleteBirthday(id) {
+  if (!isAdmin()) return;
   const { error } = await sb.from('tello_staff_birthdays').delete().eq('id', id);
   if (error) console.error(error);
   await loadBirthdays();
@@ -715,7 +778,18 @@ async function deleteBirthday(id) {
 // ---------------------------------------------------------------------------
 // Render — app shell
 // ---------------------------------------------------------------------------
+const ADMIN_ONLY_TABS = ['staff', 'chat'];
+
+function applyRoleUI() {
+  document.getElementById('roleBadge').style.display = isAdmin() ? 'none' : '';
+  document.querySelectorAll('.nav-btn[data-role]').forEach((b) => {
+    b.classList.toggle('nav-hidden', b.dataset.role !== state.role);
+  });
+  if (!isAdmin() && ADMIN_ONLY_TABS.includes(state.tab)) state.tab = 'schedule';
+}
+
 function renderApp() {
+  applyRoleUI();
   document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.tab));
   document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
   const view = document.getElementById('view-' + state.tab);
@@ -728,6 +802,17 @@ function renderApp() {
 // Render — Schedule board
 // ---------------------------------------------------------------------------
 async function renderSchedule() {
+  if (!isAdmin()) {
+    document.getElementById('view-schedule').innerHTML = `
+      <div class="placeholder-view" style="display:flex; min-height:40vh;">
+        <div class="placeholder">
+          <div class="placeholder-icon">🗓️</div>
+          <h2>My Schedule</h2>
+          <p>Your personal schedule will appear here once your staff profile is linked, later in this session.</p>
+        </div>
+      </div>`;
+    return;
+  }
   const ws = weekStartForOffset(state.weekOffset);
   const wsStr = toISODate(ws);
   const assignments = await loadWeek(wsStr);
@@ -866,22 +951,24 @@ async function renderToday() {
 
     <section class="card">
       <h3>Reminders</h3>
+      ${isAdmin() ? `
       <form data-form="reminder" class="inline-form">
         <input type="text" name="title" placeholder="Reminder title" required />
         <input type="text" name="note" placeholder="Note (optional)" />
         <input type="time" name="due_time" />
         <button type="submit" class="btn-primary">+ Add</button>
-      </form>
+      </form>` : ''}
       <div class="list">${renderReminders()}</div>
     </section>
 
     <section class="card">
       <h3>Birthdays</h3>
+      ${isAdmin() ? `
       <form data-form="birthday" class="inline-form">
         <input type="text" name="name" placeholder="Staff name" required />
         <input type="date" name="date" required />
         <button type="submit" class="btn-primary">+ Add</button>
-      </form>
+      </form>` : ''}
       <div class="list">${renderBirthdays(now)}</div>
     </section>
   `;
@@ -891,12 +978,12 @@ function renderReminders() {
   if (!state.reminders.length) return `<div class="muted">No reminders yet.</div>`;
   return state.reminders.map((r) => `
     <div class="reminder-item ${r.done ? 'done' : ''}">
-      <input type="checkbox" data-kind="reminder-done" data-id="${r.id}" ${r.done ? 'checked' : ''} />
+      <input type="checkbox" data-kind="reminder-done" data-id="${r.id}" ${r.done ? 'checked' : ''} ${isAdmin() ? '' : 'disabled'} />
       <div class="reminder-body">
         <div class="reminder-title">${esc(r.title)}${r.due_time ? ` <span class="due-time">${esc(r.due_time)}</span>` : ''}</div>
         ${r.note ? `<div class="reminder-note">${esc(r.note)}</div>` : ''}
       </div>
-      <button class="btn-remove" data-action="reminder-delete" data-id="${r.id}">✕</button>
+      ${isAdmin() ? `<button class="btn-remove" data-action="reminder-delete" data-id="${r.id}">✕</button>` : ''}
     </div>`).join('');
 }
 
@@ -920,7 +1007,7 @@ function renderBirthdays(now) {
       <div class="birthday-item ${diff === 0 ? 'today' : ''}">
         <div><b>${esc(b.name)}</b> — ${monthName} ${b.bday_day}</div>
         <div class="birthday-tag">${label}</div>
-        <button class="btn-remove" data-action="birthday-delete" data-id="${b.id}">✕</button>
+        ${isAdmin() ? `<button class="btn-remove" data-action="birthday-delete" data-id="${b.id}">✕</button>` : ''}
       </div>`;
   }).join('');
 }
