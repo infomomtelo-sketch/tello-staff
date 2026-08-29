@@ -308,8 +308,9 @@
     font-size: 12px;
   }
   .schedule-grid td.slot-label.is-night { color: var(--accent); }
-  .schedule-grid td { background: var(--bg-page); min-width: 96px; }
+  .schedule-grid td { background: var(--bg-page); min-width: 96px; position: relative; }
   .cell-input {
+    display: block;
     border: none !important;
     background: transparent !important;
     padding: 4px !important;
@@ -319,8 +320,29 @@
     font-family: inherit;
   }
   .cell-input:focus { outline: 1px solid var(--accent); border-radius: 4px; }
-  td.cell-dayoff { background: rgba(229, 114, 107, 0.18) !important; position: relative; }
+  .cell-input.cell-location { font-size: 11px; color: var(--text-muted); border-top: 1px dashed var(--border) !important; }
+  /* Gap detection: filled = green, empty = red, approved day off = gray */
+  td.cell-filled { background: rgba(107, 211, 154, 0.10) !important; }
+  td.cell-empty { background: rgba(229, 114, 107, 0.14) !important; }
+  td.cell-dayoff { background: rgba(150, 150, 150, 0.28) !important; }
   .dayoff-badge { position: absolute; top: 2px; right: 4px; font-size: 11px; pointer-events: none; }
+
+  .reliever-toggle { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 28px; }
+  .view-toggle { display: flex; background: var(--bg-input); border-radius: 8px; padding: 4px; width: auto; }
+  .view-toggle button { flex: 0 0 auto; background: transparent; border: none; color: var(--text-muted); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; }
+  .view-toggle button.active { background: var(--accent); color: var(--accent-contrast); }
+
+  table.month-grid { table-layout: fixed; min-width: 720px; }
+  .month-grid th { background: var(--bg-elevated); text-align: center; font-size: 12px; padding: 6px; }
+  td.month-cell { vertical-align: top; padding: 6px; min-width: 96px; height: 92px; background: var(--bg-page); }
+  td.month-cell.outside { opacity: 0.35; }
+  td.month-cell.empty { background: rgba(229, 114, 107, 0.14) !important; }
+  .month-daynum { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+  .month-entry { font-size: 11px; margin-bottom: 2px; padding: 1px 4px; border-radius: 4px; word-break: break-word; }
+  .month-entry.filled { background: rgba(107, 211, 154, 0.18); }
+  .month-entry.dayoff { background: rgba(150, 150, 150, 0.3); color: var(--text-muted); }
+  .month-entry.no-relievers { color: var(--danger); font-weight: 600; }
+  .month-loc { color: var(--text-muted); }
 
   /* ---------- Today view ---------- */
   .today-date { font-size: 20px; font-weight: 800; margin-bottom: 16px; }
@@ -490,6 +512,8 @@ const state = {
   authMode: 'signin',
   config: { homes: [], relievers: [] },
   weekOffset: 0,
+  relieverViewMode: 'week',
+  monthOffset: 0,
   manageOpen: false,
   scheduleCache: {},
   reminders: [],
@@ -554,6 +578,14 @@ function defaultConfig() {
 
 function emptyAssignments() {
   return { homes: {}, relievers: {} };
+}
+
+// A reliever/day cell is { name, location }. Older data stored a plain
+// name string — normalize that transparently so nothing needs migrating.
+function relieverCellData(raw) {
+  if (!raw) return { name: '', location: '' };
+  if (typeof raw === 'string') return { name: raw, location: '' };
+  return { name: raw.name || '', location: raw.location || '' };
 }
 
 // ---------------------------------------------------------------------------
@@ -712,7 +744,15 @@ function setCellValue(dataset, value) {
   } else if (dataset.kind === 'reliever') {
     const { reliever, day } = dataset;
     assignments.relievers[reliever] = assignments.relievers[reliever] || {};
-    assignments.relievers[reliever][day] = value;
+    const cell = relieverCellData(assignments.relievers[reliever][day]);
+    cell.name = value;
+    assignments.relievers[reliever][day] = cell;
+  } else if (dataset.kind === 'reliever-location') {
+    const { reliever, day } = dataset;
+    assignments.relievers[reliever] = assignments.relievers[reliever] || {};
+    const cell = relieverCellData(assignments.relievers[reliever][day]);
+    cell.location = value;
+    assignments.relievers[reliever][day] = cell;
   }
   queueSaveWeek(wsStr);
 }
@@ -935,6 +975,14 @@ async function renderSchedule() {
 
   const homesRows = state.config.homes.map((home) => renderHomeRows(home, days, assignments, dayOffSet)).join('');
   const relieverRows = state.config.relievers.map((r) => renderRelieverRow(r, days, assignments, dayOffSet)).join('');
+  const relieverSection = state.relieverViewMode === 'month'
+    ? await renderRelieverMonth(dayOffSet)
+    : `<div class="grid-wrap">
+        <table class="schedule-grid" id="relieversTable">
+          <thead><tr><th class="row-head" colspan="2">Reliever</th>${dayHeaderCells}</tr></thead>
+          <tbody>${relieverRows}</tbody>
+        </table>
+      </div>`;
 
   const managePanel = state.manageOpen ? `
     <div id="managePanel" class="manage-panel no-print">
@@ -978,14 +1026,20 @@ async function renderSchedule() {
         <tbody>${homesRows}</tbody>
       </table>
     </div>
-    <h3 class="section-title">Reliever Pool</h3>
-    <div class="grid-wrap">
-      <table class="schedule-grid" id="relieversTable">
-        <thead><tr><th class="row-head" colspan="2">Reliever</th>${dayHeaderCells}</tr></thead>
-        <tbody>${relieverRows}</tbody>
-      </table>
+    <div class="reliever-toggle">
+      <h3 class="section-title" style="margin:0;">Reliever Pool</h3>
+      <div class="view-toggle no-print">
+        <button data-action="reliever-view" data-mode="week" class="${state.relieverViewMode === 'week' ? 'active' : ''}">Week</button>
+        <button data-action="reliever-view" data-mode="month" class="${state.relieverViewMode === 'month' ? 'active' : ''}">Month</button>
+      </div>
     </div>
+    ${relieverSection}
   `;
+}
+
+function cellStateClass(val, flagged) {
+  if (!val) return 'cell-empty';
+  return flagged ? 'cell-dayoff' : 'cell-filled';
 }
 
 function renderHomeRows(home, days, assignments, dayOffSet) {
@@ -999,7 +1053,7 @@ function renderHomeRows(home, days, assignments, dayOffSet) {
         const dayData = homeData[d.key] || {};
         const val = dayData[slotKey] || '';
         const flagged = val && dayOffSet.has(`${toISODate(d.date)}|${val}`);
-        return `<td class="${flagged ? 'cell-dayoff' : ''}">${staffCell({ kind: 'home', home: home.id, day: d.key, slot: slotKey }, val, flagged)}</td>`;
+        return `<td class="${cellStateClass(val, flagged)}">${staffCell({ kind: 'home', home: home.id, day: d.key, slot: slotKey }, val, flagged)}</td>`;
       }).join('')}
     </tr>`).join('');
 }
@@ -1010,9 +1064,12 @@ function renderRelieverRow(reliever, days, assignments, dayOffSet) {
     <tr>
       <th class="row-head" colspan="2">${esc(reliever.name)}</th>
       ${days.map((d) => {
-        const val = relData[d.key] || '';
-        const flagged = val && dayOffSet.has(`${toISODate(d.date)}|${val}`);
-        return `<td class="${flagged ? 'cell-dayoff' : ''}">${staffCell({ kind: 'reliever', reliever: reliever.id, day: d.key }, val, flagged)}</td>`;
+        const cell = relieverCellData(relData[d.key]);
+        const dISO = toISODate(d.date);
+        const flagged = cell.name && dayOffSet.has(`${dISO}|${cell.name}`);
+        const nameSelect = staffCell({ kind: 'reliever', reliever: reliever.id, day: d.key }, cell.name, flagged);
+        const locationSelect = locationCell({ kind: 'reliever-location', reliever: reliever.id, day: d.key }, cell.location);
+        return `<td class="${cellStateClass(cell.name, flagged)}">${nameSelect}${locationSelect}</td>`;
       }).join('')}
     </tr>`;
 }
@@ -1032,6 +1089,85 @@ function staffCell(dataAttrs, val, flagged) {
   opts.push(`<option value="__custom__">+ Custom name…</option>`);
   const badge = flagged ? `<span class="dayoff-badge" title="Approved day off">🌴</span>` : '';
   return `<select class="cell-input" ${dataStr}>${opts.join('')}</select>${badge}`;
+}
+
+// Location dropdown for a reliever/day cell — options are the currently
+// configured homes (where a reliever would actually be deployed), plus a
+// "Custom…" escape hatch for anything else (an office, a training site).
+function locationCell(dataAttrs, val) {
+  const dataStr = Object.entries(dataAttrs).map(([k, v]) => `data-${k}="${esc(v)}"`).join(' ');
+  const names = state.config.homes.map((h) => h.name);
+  const knownOrBlank = val === '' || names.includes(val);
+  const opts = [`<option value="">— location —</option>`];
+  names.forEach((n) => opts.push(`<option value="${esc(n)}" ${n === val ? 'selected' : ''}>${esc(n)}</option>`));
+  if (!knownOrBlank) opts.push(`<option value="${esc(val)}" selected>${esc(val)}</option>`);
+  opts.push(`<option value="__custom__">+ Custom…</option>`);
+  return `<select class="cell-input cell-location" ${dataStr}>${opts.join('')}</select>`;
+}
+
+// ---------------------------------------------------------------------------
+// Render — Reliever Pool monthly calendar (Sun–Sat, read-only overview;
+// edits still happen in the Week view's live dropdowns)
+// ---------------------------------------------------------------------------
+function computeMonthGrid(monthOffset) {
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+  const last = new Date(now.getFullYear(), now.getMonth() + monthOffset + 1, 0);
+  const gridStart = addDays(first, -first.getDay());
+  const gridEnd = addDays(last, 6 - last.getDay());
+  const days = [];
+  for (let d = new Date(gridStart); d <= gridEnd; d = addDays(d, 1)) days.push(new Date(d));
+  return { first, days };
+}
+
+async function renderRelieverMonth(dayOffSet) {
+  const { first, days } = computeMonthGrid(state.monthOffset);
+  const weekStarts = [...new Set(days.map((d) => toISODate(startOfWeek(d))))];
+  const weekAssignments = {};
+  await Promise.all(weekStarts.map(async (ws) => { weekAssignments[ws] = await loadWeek(ws); }));
+
+  const monthLabel = first.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const dayHeaders = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => `<th>${d}</th>`).join('');
+
+  const cells = days.map((d) => {
+    const inMonth = d.getMonth() === first.getMonth();
+    const wsStr = toISODate(startOfWeek(d));
+    const dayKey = DAY_KEYS[(d.getDay() + 6) % 7];
+    const assignments = weekAssignments[wsStr] || emptyAssignments();
+    const dISO = toISODate(d);
+    const working = [];
+    state.config.relievers.forEach((r) => {
+      const cell = relieverCellData((assignments.relievers[r.id] || {})[dayKey]);
+      if (cell.name) working.push(cell);
+    });
+    const onDayOff = working.filter((c) => dayOffSet.has(`${dISO}|${c.name}`));
+    const active = working.filter((c) => !dayOffSet.has(`${dISO}|${c.name}`));
+    const cellClass = !inMonth ? 'month-cell outside' : (working.length ? 'month-cell' : 'month-cell empty');
+    return `
+      <td class="${cellClass}">
+        <div class="month-daynum">${d.getDate()}</div>
+        ${active.map((c) => `<div class="month-entry filled">${esc(c.name)}${c.location ? ` <span class="month-loc">— ${esc(c.location)}</span>` : ''}</div>`).join('')}
+        ${onDayOff.map((c) => `<div class="month-entry dayoff">🌴 ${esc(c.name)}</div>`).join('')}
+        ${(!working.length && inMonth) ? `<div class="month-entry no-relievers">No relievers</div>` : ''}
+      </td>`;
+  });
+
+  const rows = [];
+  for (let i = 0; i < cells.length; i += 7) rows.push(`<tr>${cells.slice(i, i + 7).join('')}</tr>`);
+
+  return `
+    <div class="week-bar no-print">
+      <button class="btn-icon" data-action="prev-month" title="Previous month">‹</button>
+      <div class="week-label">${monthLabel}</div>
+      <button class="btn-icon" data-action="next-month" title="Next month">›</button>
+      <button class="btn-outline" data-action="today-month">This Month</button>
+    </div>
+    <div class="grid-wrap">
+      <table class="schedule-grid month-grid">
+        <thead><tr>${dayHeaders}</tr></thead>
+        <tbody>${rows.join('')}</tbody>
+      </table>
+    </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1068,8 +1204,8 @@ async function renderMySchedule() {
       });
     });
     state.config.relievers.forEach((r) => {
-      const v = (assignments.relievers[r.id] || {})[d.key];
-      if (v === me.name) shifts.push(`Reliever — ${esc(r.name)}`);
+      const cell = relieverCellData((assignments.relievers[r.id] || {})[d.key]);
+      if (cell.name === me.name) shifts.push(`Reliever — ${esc(r.name)}${cell.location ? ` (${esc(cell.location)})` : ''}`);
     });
     const isDayOff = dayOffSet.has(`${dISO}|${me.name}`);
     return `
@@ -1266,9 +1402,9 @@ async function renderToday() {
   }).join('');
 
   const relieverToday = state.config.relievers
-    .map((r) => ({ r, v: (assignments.relievers[r.id] || {})[dayKey] }))
-    .filter((x) => x.v)
-    .map((x) => `<div class="reliever-today-row"><b>${esc(x.r.name)}</b>: ${esc(x.v)}</div>`)
+    .map((r) => ({ r, cell: relieverCellData((assignments.relievers[r.id] || {})[dayKey]) }))
+    .filter((x) => x.cell.name)
+    .map((x) => `<div class="reliever-today-row"><b>${esc(x.r.name)}</b>: ${esc(x.cell.name)}${x.cell.location ? ` — ${esc(x.cell.location)}` : ''}</div>`)
     .join('') || `<div class="muted">No relievers deployed today.</div>`;
 
   document.getElementById('view-today').innerHTML = `
@@ -1364,6 +1500,22 @@ function onGlobalClick(e) {
       break;
     case 'today-week':
       state.weekOffset = 0;
+      renderSchedule();
+      break;
+    case 'reliever-view':
+      state.relieverViewMode = btn.dataset.mode;
+      renderSchedule();
+      break;
+    case 'prev-month':
+      state.monthOffset -= 1;
+      renderSchedule();
+      break;
+    case 'next-month':
+      state.monthOffset += 1;
+      renderSchedule();
+      break;
+    case 'today-month':
+      state.monthOffset = 0;
       renderSchedule();
       break;
     case 'manage-toggle':
@@ -1468,8 +1620,9 @@ function onGlobalChange(e) {
   const t = e.target;
   if (t.classList.contains('cell-input')) {
     if (t.value === '__custom__') {
-      const name = window.prompt('Staff name:', '');
-      if (name && name.trim()) setCellValue(t.dataset, name.trim());
+      const label = t.dataset.kind === 'reliever-location' ? 'Location:' : 'Staff name:';
+      const val = window.prompt(label, '');
+      if (val && val.trim()) setCellValue(t.dataset, val.trim());
       renderSchedule();
       return;
     }

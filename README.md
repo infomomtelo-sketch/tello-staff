@@ -86,6 +86,28 @@ round's ask — see Parts 2–3 above. New work goes here.
   birthday. Schema change lives in a fresh `schema_v3.sql` rather than being
   appended to `schema_v2.sql`, per this round's instructions.
 
+**Part 2 — Schedule Board Upgrade**
+
+- **Gap-detection colors**: every Schedule Board cell (Homes and Reliever
+  Pool, week and month views) is now tinted — filled = green, empty = red,
+  approved day off = gray — instead of a plain background.
+- **Location per reliever slot**: each Reliever Pool day-cell is now a Name
+  dropdown *and* a Location dropdown (options = your configured homes, plus
+  a custom-value escape hatch), since relievers float between homes. No DB
+  migration needed — it's a shape change within the existing `assignments`
+  jsonb column (old plain-string reliever values still display correctly:
+  they're read as "name, no location").
+- **Monthly view (Reliever Pool only)**: a Week/Month toggle above the
+  Reliever Pool table. Month mode renders a read-only Sun–Sat calendar grid
+  (leading/trailing days from adjacent months included), each day cell
+  listing every reliever working that day (name + location) and anyone on
+  an approved day off. Live editing stays in Week mode — a full month of
+  inline dropdowns per reliever wouldn't be legible, especially on mobile.
+  The Homes board stays weekly-only (24 data points/day across 8 homes × 3
+  slots doesn't compact into a calendar cell the way a single reliever list
+  does).
+- Staff dropdown per slot was already in place from the prior round.
+
 ## Setup
 
 ### 1. Database (Supabase project `nwlhsshvqmbhemhxcran`)
