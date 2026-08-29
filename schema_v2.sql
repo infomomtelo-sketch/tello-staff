@@ -212,3 +212,19 @@ create policy "dayoff delete" on tello_staff_dayoff_requests
 select
   (select count(*) from information_schema.tables
    where table_schema = 'public' and table_name = 'tello_staff_dayoff_requests') as dayoff_table_created;
+
+-- ===========================================================================
+-- Part 4 — Birthdays on the Staff Directory
+-- ===========================================================================
+-- Birthdays now live on each staff member's own record instead of a
+-- separately-typed list on Today's Board, so there's one place to keep a
+-- person's info in sync. The old tello_staff_birthdays table (Session 1) is
+-- left in place — nothing reads from it anymore, but nothing drops it
+-- either; drop it yourself later if you're sure you don't want the history.
+
+alter table tello_staff_members add column if not exists bday_month int check (bday_month between 1 and 12);
+alter table tello_staff_members add column if not exists bday_day int check (bday_day between 1 and 31);
+
+select
+  (select count(*) from information_schema.columns
+   where table_schema = 'public' and table_name = 'tello_staff_members' and column_name = 'bday_month') as birthday_columns_added;

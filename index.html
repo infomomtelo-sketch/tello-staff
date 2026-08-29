@@ -493,7 +493,6 @@ const state = {
   manageOpen: false,
   scheduleCache: {},
   reminders: [],
-  birthdays: [],
   staff: [],
   staffLoginFormId: null,
   dayOffRequests: [],
@@ -638,7 +637,6 @@ async function enterApp(user) {
     await loadStaff();
     await loadDayOffRequests();
     await loadReminders();
-    await loadBirthdays();
   }
   renderApp();
 }
@@ -783,10 +781,12 @@ async function loadStaff() {
   state.staff = data || [];
 }
 
-async function addStaffMember(name, role, homeId) {
+async function addStaffMember(name, role, homeId, bdayMonth, bdayDay) {
   if (!isAdmin()) return;
-  const { error } = await sb.from('tello_staff_members')
-    .insert({ owner_id: state.orgId, name, role: role || 'caregiver', home_id: homeId || null });
+  const { error } = await sb.from('tello_staff_members').insert({
+    owner_id: state.orgId, name, role: role || 'caregiver', home_id: homeId || null,
+    bday_month: bdayMonth || null, bday_day: bdayDay || null,
+  });
   if (error) { console.error(error); alert('Could not add staff member: ' + error.message); return; }
   await loadStaff();
   renderStaff();
@@ -888,32 +888,6 @@ function approvedDayOffSet() {
   return set;
 }
 
-// ---------------------------------------------------------------------------
-// Data — birthdays
-// ---------------------------------------------------------------------------
-async function loadBirthdays() {
-  const { data, error } = await sb.from('tello_staff_birthdays').select('*')
-    .eq('user_id', state.orgId).order('name');
-  if (error) console.error(error);
-  state.birthdays = data || [];
-}
-
-async function addBirthday(name, month, day) {
-  if (!isAdmin()) return;
-  const { error } = await sb.from('tello_staff_birthdays')
-    .insert({ user_id: state.orgId, name, bday_month: month, bday_day: day });
-  if (error) console.error(error);
-  await loadBirthdays();
-  renderToday();
-}
-
-async function deleteBirthday(id) {
-  if (!isAdmin()) return;
-  const { error } = await sb.from('tello_staff_birthdays').delete().eq('id', id);
-  if (error) console.error(error);
-  await loadBirthdays();
-  renderToday();
-}
 
 // ---------------------------------------------------------------------------
 // Render — app shell
@@ -1141,6 +1115,7 @@ function renderStaff() {
             <option value="">Unassigned</option>
             ${homeOptions}
           </select>
+          <input type="date" name="birthday" title="Birthday (optional)" />
           <button type="submit" class="btn-primary">+ Add Staff</button>
         </form>
       </div>
@@ -1223,6 +1198,8 @@ function renderMyDayOffRow(r) {
 function renderStaffRow(s) {
   const homeOptions = state.config.homes.map((h) =>
     `<option value="${h.id}" ${s.home_id === h.id ? 'selected' : ''}>${esc(h.name)}</option>`).join('');
+  const bdayVal = (s.bday_month && s.bday_day)
+    ? `2000-${String(s.bday_month).padStart(2, '0')}-${String(s.bday_day).padStart(2, '0')}` : '';
   return `
     <div class="card" style="padding:12px 14px; margin-bottom:10px;">
       <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
@@ -1235,6 +1212,7 @@ function renderStaffRow(s) {
           <option value="">Unassigned</option>
           ${homeOptions}
         </select>
+        <input type="date" title="Birthday" data-kind="staff-birthday" data-id="${s.id}" value="${bdayVal}" />
         <button class="btn-remove" data-action="staff-delete" data-id="${s.id}" title="Remove">✕</button>
       </div>
       <div style="margin-top:8px;">
@@ -1315,12 +1293,7 @@ async function renderToday() {
 
     <section class="card">
       <h3>Birthdays</h3>
-      ${isAdmin() ? `
-      <form data-form="birthday" class="inline-form">
-        <input type="text" name="name" placeholder="Staff name" required />
-        <input type="date" name="date" required />
-        <button type="submit" class="btn-primary">+ Add</button>
-      </form>` : ''}
+      ${isAdmin() ? `<p style="font-size:12px; margin-top:-4px;">Set a staff member's birthday from the Staff tab.</p>` : ''}
       <div class="list">${renderBirthdays(now)}</div>
     </section>
   `;
@@ -1348,18 +1321,18 @@ function nextBirthdayDiff(month, day, now) {
 }
 
 function renderBirthdays(now) {
-  if (!state.birthdays.length) return `<div class="muted">No birthdays added yet.</div>`;
-  const withDiff = state.birthdays
-    .map((b) => ({ b, diff: nextBirthdayDiff(b.bday_month, b.bday_day, now) }))
+  const withBday = state.staff.filter((s) => s.bday_month && s.bday_day);
+  if (!withBday.length) return `<div class="muted">No staff birthdays set yet.</div>`;
+  const withDiff = withBday
+    .map((s) => ({ s, diff: nextBirthdayDiff(s.bday_month, s.bday_day, now) }))
     .sort((a, b) => a.diff - b.diff);
-  return withDiff.map(({ b, diff }) => {
+  return withDiff.map(({ s, diff }) => {
     const label = diff === 0 ? 'Today!' : diff === 1 ? 'Tomorrow' : `in ${diff} days`;
-    const monthName = new Date(2000, b.bday_month - 1, 1).toLocaleDateString('en-US', { month: 'short' });
+    const monthName = new Date(2000, s.bday_month - 1, 1).toLocaleDateString('en-US', { month: 'short' });
     return `
       <div class="birthday-item ${diff === 0 ? 'today' : ''}">
-        <div><b>${esc(b.name)}</b> — ${monthName} ${b.bday_day}</div>
+        <div><b>${esc(s.name)}</b> — ${monthName} ${s.bday_day}</div>
         <div class="birthday-tag">${label}</div>
-        ${isAdmin() ? `<button class="btn-remove" data-action="birthday-delete" data-id="${b.id}">✕</button>` : ''}
       </div>`;
   }).join('');
 }
@@ -1421,9 +1394,6 @@ function onGlobalClick(e) {
     case 'reminder-delete':
       deleteReminder(btn.dataset.id);
       break;
-    case 'birthday-delete':
-      deleteBirthday(btn.dataset.id);
-      break;
     case 'staff-delete':
       deleteStaffMember(btn.dataset.id);
       break;
@@ -1463,21 +1433,14 @@ function onGlobalSubmit(e) {
     if (!title) return;
     addReminder(title, fd.get('note').trim(), fd.get('due_time'));
     form.reset();
-  } else if (form.dataset.form === 'birthday') {
-    e.preventDefault();
-    const fd = new FormData(form);
-    const name = fd.get('name').trim();
-    const dateVal = fd.get('date');
-    if (!name || !dateVal) return;
-    const [, m, d] = dateVal.split('-').map(Number);
-    addBirthday(name, m, d);
-    form.reset();
   } else if (form.dataset.form === 'add-staff') {
     e.preventDefault();
     const fd = new FormData(form);
     const name = fd.get('name').trim();
     if (!name) return;
-    addStaffMember(name, fd.get('role'), fd.get('home_id') || null);
+    const bday = fd.get('birthday');
+    const [, bm, bd] = bday ? bday.split('-').map(Number) : [];
+    addStaffMember(name, fd.get('role'), fd.get('home_id') || null, bm, bd);
     form.reset();
   } else if (form.dataset.form === 'staff-login') {
     e.preventDefault();
@@ -1525,6 +1488,13 @@ function onGlobalChange(e) {
     updateStaffMember(t.dataset.id, { role: t.value }).then(renderStaff);
   } else if (t.dataset.kind === 'staff-home') {
     updateStaffMember(t.dataset.id, { home_id: t.value || null });
+  } else if (t.dataset.kind === 'staff-birthday') {
+    if (t.value) {
+      const [, m, d] = t.value.split('-').map(Number);
+      updateStaffMember(t.dataset.id, { bday_month: m, bday_day: d });
+    } else {
+      updateStaffMember(t.dataset.id, { bday_month: null, bday_day: null });
+    }
   }
 }
 

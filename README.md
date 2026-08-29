@@ -64,6 +64,15 @@ Single static file (`index.html`), no build step — matches the other RunP8 app
   week-by-week list of everywhere their name appears across homes and the
   reliever pool, plus their approved days off — no more placeholder.
 
+**Part 4 — Birthdays on the Staff Directory**
+
+- Birthdays moved off the standalone Today's Board list and onto each staff
+  member's own record (`bday_month`/`bday_day` on `tello_staff_members`), set
+  from the Staff tab — one source of truth instead of typing a name twice.
+  Today's Board's Birthdays card now reads from the staff directory; the old
+  add-birthday form is gone. The Session 1 `tello_staff_birthdays` table is
+  left in the database, unused.
+
 ## Setup
 
 ### 1. Database (Supabase project `nwlhsshvqmbhemhxcran`)
