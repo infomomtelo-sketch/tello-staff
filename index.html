@@ -449,13 +449,7 @@
 
     <div id="view-staff" class="view"></div>
 
-    <div id="view-chat" class="view placeholder-view">
-      <div class="placeholder">
-        <div class="placeholder-icon">💬</div>
-        <h2>Chat</h2>
-        <p>Tello, the AI operations advisor, is coming in the next session.</p>
-      </div>
-    </div>
+    <div id="view-chat" class="view"></div>
 
     <div id="view-dayoff" class="view"></div>
   </main>
@@ -471,7 +465,7 @@
       <span class="nav-icon">👥</span><span>Staff</span>
     </button>
     <button class="nav-btn" data-action="nav-tab" data-tab="chat" data-role="admin">
-      <span class="nav-icon">💬</span><span>Chat</span>
+      <span class="nav-icon">🧩</span><span>Tello</span>
     </button>
     <button class="nav-btn" data-action="nav-tab" data-tab="dayoff" data-role="caregiver">
       <span class="nav-icon">📋</span><span>Day Off</span>
@@ -928,6 +922,81 @@ function approvedDayOffSet() {
   return set;
 }
 
+// ---------------------------------------------------------------------------
+// Data — Gap Resolver (rule-based "Tello" suggestions)
+// ---------------------------------------------------------------------------
+function findScheduleGaps(assignments, days) {
+  const gaps = [];
+  state.config.homes.forEach((home) => {
+    const homeData = assignments.homes[home.id] || {};
+    [['cg1', 'Caregiver 1'], ['cg2', 'Caregiver 2'], ['night', 'Night Shift']].forEach(([slotKey, slotLabel]) => {
+      days.forEach((d) => {
+        const val = (homeData[d.key] || {})[slotKey] || '';
+        if (!val) {
+          gaps.push({
+            kind: 'home', home: home.id, slot: slotKey, day: d.key, dayLabel: d.label, date: d.date,
+            label: `${home.name} — ${slotLabel}`,
+          });
+        }
+      });
+    });
+  });
+  state.config.relievers.forEach((r) => {
+    const relData = assignments.relievers[r.id] || {};
+    days.forEach((d) => {
+      const cell = relieverCellData(relData[d.key]);
+      if (!cell.name) {
+        gaps.push({
+          kind: 'reliever', reliever: r.id, day: d.key, dayLabel: d.label, date: d.date,
+          label: `Reliever — ${r.name}`,
+        });
+      }
+    });
+  });
+  return gaps.sort((a, b) => a.date - b.date);
+}
+
+function namesAssignedOnDay(assignments, dayKey) {
+  const names = new Set();
+  state.config.homes.forEach((home) => {
+    const dayData = (assignments.homes[home.id] || {})[dayKey] || {};
+    Object.values(dayData).forEach((v) => { if (v) names.add(v); });
+  });
+  state.config.relievers.forEach((r) => {
+    const cell = relieverCellData((assignments.relievers[r.id] || {})[dayKey]);
+    if (cell.name) names.add(cell.name);
+  });
+  return names;
+}
+
+function shiftCountsThisWeek(assignments) {
+  const counts = {};
+  const bump = (name) => { if (name) counts[name] = (counts[name] || 0) + 1; };
+  state.config.homes.forEach((home) => {
+    Object.values(assignments.homes[home.id] || {}).forEach((dayData) => {
+      Object.values(dayData || {}).forEach(bump);
+    });
+  });
+  state.config.relievers.forEach((r) => {
+    Object.values(assignments.relievers[r.id] || {}).forEach((raw) => bump(relieverCellData(raw).name));
+  });
+  return counts;
+}
+
+// Available = not already assigned to another slot that day, and no
+// approved day off that date. Ranked by fewest shifts this week (spreads
+// hours fairly), then name — no hardcoded names, home, or care-home-specific
+// logic, so this works the same for any operator's roster.
+function suggestForGap(gap, assignments, dayOffSet) {
+  const dISO = toISODate(gap.date);
+  const assignedToday = namesAssignedOnDay(assignments, gap.day);
+  const counts = shiftCountsThisWeek(assignments);
+  return state.staff
+    .filter((s) => !assignedToday.has(s.name) && !dayOffSet.has(`${dISO}|${s.name}`))
+    .map((s) => ({ name: s.name, shifts: counts[s.name] || 0 }))
+    .sort((a, b) => a.shifts - b.shifts || a.name.localeCompare(b.name));
+}
+
 
 // ---------------------------------------------------------------------------
 // Render — app shell
@@ -942,16 +1011,21 @@ function applyRoleUI() {
   if (!isAdmin() && ADMIN_ONLY_TABS.includes(state.tab)) state.tab = 'schedule';
 }
 
+function renderCurrentTab() {
+  if (state.tab === 'schedule') renderSchedule();
+  if (state.tab === 'today') renderToday();
+  if (state.tab === 'staff') renderStaff();
+  if (state.tab === 'dayoff') renderDayOff();
+  if (state.tab === 'chat') renderGapResolver();
+}
+
 function renderApp() {
   applyRoleUI();
   document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.tab));
   document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
   const view = document.getElementById('view-' + state.tab);
   if (view) view.classList.add('active');
-  if (state.tab === 'schedule') renderSchedule();
-  if (state.tab === 'today') renderToday();
-  if (state.tab === 'staff') renderStaff();
-  if (state.tab === 'dayoff') renderDayOff();
+  renderCurrentTab();
 }
 
 // ---------------------------------------------------------------------------
@@ -1168,6 +1242,68 @@ async function renderRelieverMonth(dayOffSet) {
         <tbody>${rows.join('')}</tbody>
       </table>
     </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Render — Tello Gap Resolver (Chat tab)
+// ---------------------------------------------------------------------------
+async function renderGapResolver() {
+  if (!isAdmin()) {
+    document.getElementById('view-chat').innerHTML = `
+      <div class="placeholder-view" style="display:flex; min-height:40vh;">
+        <div class="placeholder">
+          <div class="placeholder-icon">🧩</div>
+          <h2>Tello</h2>
+          <p>Gap suggestions are for admins.</p>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const ws = weekStartForOffset(state.weekOffset);
+  const wsStr = toISODate(ws);
+  const assignments = await loadWeek(wsStr);
+  const days = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(ws, i) }));
+  const label = `${fmtShort(ws)} – ${fmtShort(addDays(ws, 6))}, ${addDays(ws, 6).getFullYear()}`;
+  const dayOffSet = approvedDayOffSet();
+  const gaps = findScheduleGaps(assignments, days);
+
+  const gapCards = gaps.length ? gaps.map((gap) => {
+    const candidates = suggestForGap(gap, assignments, dayOffSet);
+    const dateLabel = `${gap.dayLabel} ${fmtShort(gap.date)}`;
+    if (!candidates.length) {
+      return `
+        <div class="card" style="padding:12px 14px;">
+          <div class="reminder-title">${esc(gap.label)} — ${dateLabel}</div>
+          <div class="muted" style="margin-top:6px;">No available staff found for this slot.</div>
+        </div>`;
+    }
+    const top = candidates[0];
+    const shiftsLabel = top.shifts === 1 ? '1 shift' : `${top.shifts} shifts`;
+    const options = candidates.map((c, i) =>
+      `<option value="${esc(c.name)}" ${i === 0 ? 'selected' : ''}>${esc(c.name)} (${c.shifts})</option>`).join('');
+    return `
+      <div class="card" style="padding:12px 14px;">
+        <div class="reminder-title">${esc(gap.label)} — ${dateLabel}</div>
+        <div class="muted" style="margin:6px 0;">💡 ${esc(top.name)} is available — not assigned ${fmtShort(gap.date)}, ${shiftsLabel} this week.</div>
+        <form data-form="gap-assign" data-kind="${gap.kind}" data-home="${gap.home || ''}" data-slot="${gap.slot || ''}" data-reliever="${gap.reliever || ''}" data-day="${gap.day}" class="inline-form">
+          <select name="name">${options}</select>
+          <button type="submit" class="btn-primary">Assign</button>
+        </form>
+      </div>`;
+  }).join('') : `<div class="card"><p style="margin:0;">🎉 No gaps this week — every slot is filled.</p></div>`;
+
+  document.getElementById('view-chat').innerHTML = `
+    <div class="week-bar no-print">
+      <button class="btn-icon" data-action="prev-week" title="Previous week">‹</button>
+      <div class="week-label">${label}</div>
+      <button class="btn-icon" data-action="next-week" title="Next week">›</button>
+      <button class="btn-outline" data-action="today-week">Today</button>
+    </div>
+    <h3 class="section-title" style="margin-top:0;">Tello — Gap Resolver</h3>
+    <p class="muted">Checks who's not already assigned that day and has no approved day off, ranked by fewest shifts this week.</p>
+    <div class="list">${gapCards}</div>
+  `;
 }
 
 // ---------------------------------------------------------------------------
@@ -1492,15 +1628,15 @@ function onGlobalClick(e) {
       break;
     case 'prev-week':
       state.weekOffset -= 1;
-      renderSchedule();
+      renderCurrentTab();
       break;
     case 'next-week':
       state.weekOffset += 1;
-      renderSchedule();
+      renderCurrentTab();
       break;
     case 'today-week':
       state.weekOffset = 0;
-      renderSchedule();
+      renderCurrentTab();
       break;
     case 'reliever-view':
       state.relieverViewMode = btn.dataset.mode;
@@ -1610,6 +1746,14 @@ function onGlobalSubmit(e) {
     if (!date) return;
     submitDayOffRequest(date, fd.get('reason').trim());
     form.reset();
+  } else if (form.dataset.form === 'gap-assign') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const name = fd.get('name');
+    const { kind, home, slot, reliever, day } = form.dataset;
+    if (kind === 'home') setCellValue({ kind: 'home', home, day, slot }, name);
+    else if (kind === 'reliever') setCellValue({ kind: 'reliever', reliever, day }, name);
+    renderGapResolver();
   } else if (form.id === 'authForm') {
     e.preventDefault();
     handleAuthSubmit(form);

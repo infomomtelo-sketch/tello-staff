@@ -108,6 +108,30 @@ round's ask — see Parts 2–3 above. New work goes here.
   does).
 - Staff dropdown per slot was already in place from the prior round.
 
+**Part 3 — Day Off Request**
+
+No new work — already fully built in the prior round (caregiver submit/
+cancel, admin approve/deny, approved days flagged on the Schedule Board)
+and re-verified against this round's wording.
+
+**Part 4 — Tello AI Gap Resolver**
+
+- The **Chat** tab (previously a "coming in the next session" placeholder)
+  is now **Tello**: a rule-based gap resolver, not an LLM call — no new
+  infrastructure, works instantly, fully explainable.
+- For the displayed week (shared with the Schedule tab), it finds every
+  empty Home or Reliever Pool slot and suggests who's available: not
+  already assigned elsewhere that day, and no approved day off that date.
+  Suggestions are ranked by fewest shifts already assigned that week, to
+  spread hours fairly.
+- Each gap shows a plain-English explanation (e.g. "Jordan is available —
+  not assigned Aug 29, 2 shifts this week"), a dropdown of every other
+  available candidate to pick a different one, and an Assign button that
+  writes directly to that slot — same effect as filling it by hand on the
+  Schedule Board.
+- Pure function of the current roster/schedule/day-off data — no hardcoded
+  names, homes, or locations, so it works the same for any operator's data.
+
 ## Setup
 
 ### 1. Database (Supabase project `nwlhsshvqmbhemhxcran`)
