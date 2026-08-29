@@ -781,11 +781,11 @@ async function loadStaff() {
   state.staff = data || [];
 }
 
-async function addStaffMember(name, role, homeId, bdayMonth, bdayDay) {
+async function addStaffMember(name, role, homeId, bdayMonth, bdayDay, contact) {
   if (!isAdmin()) return;
   const { error } = await sb.from('tello_staff_members').insert({
     owner_id: state.orgId, name, role: role || 'caregiver', home_id: homeId || null,
-    bday_month: bdayMonth || null, bday_day: bdayDay || null,
+    bday_month: bdayMonth || null, bday_day: bdayDay || null, contact: contact || null,
   });
   if (error) { console.error(error); alert('Could not add staff member: ' + error.message); return; }
   await loadStaff();
@@ -1115,6 +1115,7 @@ function renderStaff() {
             <option value="">Unassigned</option>
             ${homeOptions}
           </select>
+          <input type="text" name="contact" placeholder="Contact (phone)" />
           <input type="date" name="birthday" title="Birthday (optional)" />
           <button type="submit" class="btn-primary">+ Add Staff</button>
         </form>
@@ -1212,6 +1213,7 @@ function renderStaffRow(s) {
           <option value="">Unassigned</option>
           ${homeOptions}
         </select>
+        <input type="text" placeholder="Contact (phone)" style="flex:1; min-width:120px;" data-kind="staff-contact" data-id="${s.id}" value="${esc(s.contact || '')}" />
         <input type="date" title="Birthday" data-kind="staff-birthday" data-id="${s.id}" value="${bdayVal}" />
         <button class="btn-remove" data-action="staff-delete" data-id="${s.id}" title="Remove">✕</button>
       </div>
@@ -1440,7 +1442,7 @@ function onGlobalSubmit(e) {
     if (!name) return;
     const bday = fd.get('birthday');
     const [, bm, bd] = bday ? bday.split('-').map(Number) : [];
-    addStaffMember(name, fd.get('role'), fd.get('home_id') || null, bm, bd);
+    addStaffMember(name, fd.get('role'), fd.get('home_id') || null, bm, bd, fd.get('contact').trim());
     form.reset();
   } else if (form.dataset.form === 'staff-login') {
     e.preventDefault();
@@ -1488,6 +1490,8 @@ function onGlobalChange(e) {
     updateStaffMember(t.dataset.id, { role: t.value }).then(renderStaff);
   } else if (t.dataset.kind === 'staff-home') {
     updateStaffMember(t.dataset.id, { home_id: t.value || null });
+  } else if (t.dataset.kind === 'staff-contact') {
+    updateStaffMember(t.dataset.id, { contact: t.value.trim() || null });
   } else if (t.dataset.kind === 'staff-birthday') {
     if (t.value) {
       const [, m, d] = t.value.split('-').map(Number);

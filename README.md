@@ -73,13 +73,26 @@ Single static file (`index.html`), no build step — matches the other RunP8 app
   add-birthday form is gone. The Session 1 `tello_staff_birthdays` table is
   left in the database, unused.
 
+## Session 2, round 2 (in progress)
+
+Staff directory, schedule dropdowns, admin-provisioned logins, and day off
+requests from the first round of Session 2 already cover most of this
+round's ask — see Parts 2–3 above. New work goes here.
+
+**Part 1 — Staff contact field**
+
+- Added `contact` (phone) to `tello_staff_members`, editable from the Add
+  Staff Member form and inline on each staff row, alongside name/role/home/
+  birthday. Schema change lives in a fresh `schema_v3.sql` rather than being
+  appended to `schema_v2.sql`, per this round's instructions.
+
 ## Setup
 
 ### 1. Database (Supabase project `nwlhsshvqmbhemhxcran`)
 
-Paste `schema.sql` into the Supabase SQL editor and run it, then paste and run
-`schema_v2.sql` (append new sections to it as Session 2 progresses). Together
-they create `tello_staff_config`, `tello_staff_schedule`,
+Run, in order: `schema.sql`, then `schema_v2.sql`, then `schema_v3.sql`
+(append new sections to whichever file matches the round they belong to).
+Together they create `tello_staff_config`, `tello_staff_schedule`,
 `tello_staff_reminders`, `tello_staff_birthdays`, `tello_staff_roles`,
 `tello_staff_members`, and `tello_staff_dayoff_requests`, all RLS-scoped per
 org, and are safe to re-run.
