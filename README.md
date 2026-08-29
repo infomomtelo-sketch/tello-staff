@@ -48,6 +48,22 @@ Single static file (`index.html`), no build step — matches the other RunP8 app
   the staff row. The caregiver resets their own password later via "Forgot
   password?" on the sign-in screen.
 
+**Part 3 — Day Off Requests**
+
+- New `tello_staff_dayoff_requests` table: date, reason, status
+  (pending/approved/denied), tied to the requesting staff member. A caregiver
+  can only file requests against their own linked staff row; admins see and
+  decide every request in their org.
+- Caregiver **Day Off** tab: submit a request, see status on past requests,
+  cancel a still-pending one.
+- Admin **Staff** tab: a Day Off Requests section lists everyone's requests
+  (pending first) with Approve/Deny.
+- An approved day off flags the matching cell(s) on the Schedule Board (🌴,
+  tinted background) for that staff member on that date.
+- Caregiver **My Schedule** (the Schedule tab) is now live: a read-only,
+  week-by-week list of everywhere their name appears across homes and the
+  reliever pool, plus their approved days off — no more placeholder.
+
 ## Setup
 
 ### 1. Database (Supabase project `nwlhsshvqmbhemhxcran`)
@@ -55,8 +71,9 @@ Single static file (`index.html`), no build step — matches the other RunP8 app
 Paste `schema.sql` into the Supabase SQL editor and run it, then paste and run
 `schema_v2.sql` (append new sections to it as Session 2 progresses). Together
 they create `tello_staff_config`, `tello_staff_schedule`,
-`tello_staff_reminders`, `tello_staff_birthdays`, `tello_staff_roles`, and
-`tello_staff_members`, all RLS-scoped per org, and are safe to re-run.
+`tello_staff_reminders`, `tello_staff_birthdays`, `tello_staff_roles`,
+`tello_staff_members`, and `tello_staff_dayoff_requests`, all RLS-scoped per
+org, and are safe to re-run.
 
 ### 2. Fill in the anon key
 

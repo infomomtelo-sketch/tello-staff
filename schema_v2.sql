@@ -152,3 +152,63 @@ alter table tello_staff_roles add constraint tello_staff_roles_staff_member_id_f
 select
   (select count(*) from information_schema.tables
    where table_schema = 'public' and table_name = 'tello_staff_members') as staff_table_created;
+
+-- ===========================================================================
+-- Part 3 — Day Off Requests
+-- ===========================================================================
+
+create table if not exists tello_staff_dayoff_requests (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  staff_member_id uuid references tello_staff_members(id) on delete set null,
+  requested_by uuid not null references auth.users(id) on delete cascade,
+  date date not null,
+  reason text,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'denied')),
+  decided_by uuid references auth.users(id) on delete set null,
+  decided_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_tello_dayoff_owner on tello_staff_dayoff_requests(owner_id);
+create index if not exists idx_tello_dayoff_requester on tello_staff_dayoff_requests(requested_by);
+
+-- Caller's own linked staff row, so a caregiver can only file requests
+-- against their own directory entry (not someone else's).
+create or replace function tello_staff_member() returns uuid
+language sql security definer stable set search_path = public as $$
+  select staff_member_id from tello_staff_roles where user_id = auth.uid();
+$$;
+
+alter table tello_staff_dayoff_requests enable row level security;
+
+drop policy if exists "dayoff select" on tello_staff_dayoff_requests;
+create policy "dayoff select" on tello_staff_dayoff_requests
+  for select using (
+    requested_by = auth.uid()
+    or (owner_id = tello_staff_org() and tello_staff_role() = 'admin')
+  );
+
+drop policy if exists "dayoff insert own" on tello_staff_dayoff_requests;
+create policy "dayoff insert own" on tello_staff_dayoff_requests
+  for insert with check (
+    requested_by = auth.uid()
+    and owner_id = tello_staff_org()
+    and (staff_member_id is null or staff_member_id = tello_staff_member())
+  );
+
+drop policy if exists "dayoff admin decide" on tello_staff_dayoff_requests;
+create policy "dayoff admin decide" on tello_staff_dayoff_requests
+  for update using (owner_id = tello_staff_org() and tello_staff_role() = 'admin')
+  with check (owner_id = tello_staff_org() and tello_staff_role() = 'admin');
+
+drop policy if exists "dayoff delete" on tello_staff_dayoff_requests;
+create policy "dayoff delete" on tello_staff_dayoff_requests
+  for delete using (
+    (requested_by = auth.uid() and status = 'pending')
+    or (owner_id = tello_staff_org() and tello_staff_role() = 'admin')
+  );
+
+select
+  (select count(*) from information_schema.tables
+   where table_schema = 'public' and table_name = 'tello_staff_dayoff_requests') as dayoff_table_created;

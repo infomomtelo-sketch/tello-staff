@@ -319,6 +319,8 @@
     font-family: inherit;
   }
   .cell-input:focus { outline: 1px solid var(--accent); border-radius: 4px; }
+  td.cell-dayoff { background: rgba(229, 114, 107, 0.18) !important; position: relative; }
+  .dayoff-badge { position: absolute; top: 2px; right: 4px; font-size: 11px; pointer-events: none; }
 
   /* ---------- Today view ---------- */
   .today-date { font-size: 20px; font-weight: 800; margin-bottom: 16px; }
@@ -433,13 +435,7 @@
       </div>
     </div>
 
-    <div id="view-dayoff" class="view placeholder-view">
-      <div class="placeholder">
-        <div class="placeholder-icon">📋</div>
-        <h2>Day Off Requests</h2>
-        <p>Requesting a day off is coming later in this session.</p>
-      </div>
-    </div>
+    <div id="view-dayoff" class="view"></div>
   </main>
 
   <nav class="bottom-nav no-print">
@@ -500,6 +496,7 @@ const state = {
   birthdays: [],
   staff: [],
   staffLoginFormId: null,
+  dayOffRequests: [],
 };
 
 function isAdmin() { return state.role === 'admin'; }
@@ -623,6 +620,7 @@ function showAuthScreen() {
   state.scheduleCache = {};
   state.staff = [];
   state.staffLoginFormId = null;
+  state.dayOffRequests = [];
   appEntered = false;
   document.getElementById('authScreen').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
@@ -638,6 +636,7 @@ async function enterApp(user) {
     await loadRole(user);
     await loadConfig();
     await loadStaff();
+    await loadDayOffRequests();
     await loadReminders();
     await loadBirthdays();
   }
@@ -838,6 +837,58 @@ async function createStaffLogin(staffId, email, password) {
 }
 
 // ---------------------------------------------------------------------------
+// Data — day off requests
+// ---------------------------------------------------------------------------
+async function loadDayOffRequests() {
+  const { data, error } = await sb.from('tello_staff_dayoff_requests').select('*')
+    .eq('owner_id', state.orgId).order('date', { ascending: true });
+  if (error) console.error(error);
+  state.dayOffRequests = data || [];
+}
+
+async function submitDayOffRequest(date, reason) {
+  if (!state.staffMemberId) {
+    alert('Your staff profile isn\'t linked to a login yet — ask your admin to finish setting it up in the Staff tab.');
+    return;
+  }
+  const { error } = await sb.from('tello_staff_dayoff_requests').insert({
+    owner_id: state.orgId, staff_member_id: state.staffMemberId, requested_by: state.user.id,
+    date, reason: reason || null,
+  });
+  if (error) { console.error(error); alert('Could not submit request: ' + error.message); return; }
+  await loadDayOffRequests();
+  renderDayOff();
+}
+
+async function cancelDayOffRequest(id) {
+  const { error } = await sb.from('tello_staff_dayoff_requests').delete().eq('id', id);
+  if (error) { console.error(error); return; }
+  await loadDayOffRequests();
+  renderDayOff();
+}
+
+async function decideDayOffRequest(id, status) {
+  if (!isAdmin()) return;
+  const { error } = await sb.from('tello_staff_dayoff_requests')
+    .update({ status, decided_by: state.user.id, decided_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) { console.error(error); return; }
+  await loadDayOffRequests();
+  renderStaff();
+  if (state.tab === 'schedule') renderSchedule();
+}
+
+function approvedDayOffSet() {
+  const set = new Set();
+  state.dayOffRequests.forEach((r) => {
+    if (r.status !== 'approved') return;
+    const staff = state.staff.find((s) => s.id === r.staff_member_id);
+    if (staff) set.add(`${r.date}|${staff.name}`);
+  });
+  return set;
+}
+
+// ---------------------------------------------------------------------------
 // Data — birthdays
 // ---------------------------------------------------------------------------
 async function loadBirthdays() {
@@ -886,37 +937,30 @@ function renderApp() {
   if (state.tab === 'schedule') renderSchedule();
   if (state.tab === 'today') renderToday();
   if (state.tab === 'staff') renderStaff();
+  if (state.tab === 'dayoff') renderDayOff();
 }
 
 // ---------------------------------------------------------------------------
 // Render — Schedule board
 // ---------------------------------------------------------------------------
 async function renderSchedule() {
-  if (!isAdmin()) {
-    document.getElementById('view-schedule').innerHTML = `
-      <div class="placeholder-view" style="display:flex; min-height:40vh;">
-        <div class="placeholder">
-          <div class="placeholder-icon">🗓️</div>
-          <h2>My Schedule</h2>
-          <p>Your personal schedule will appear here once your staff profile is linked, later in this session.</p>
-        </div>
-      </div>`;
-    return;
-  }
+  if (!isAdmin()) return renderMySchedule();
+
   const ws = weekStartForOffset(state.weekOffset);
   const wsStr = toISODate(ws);
   const assignments = await loadWeek(wsStr);
   const days = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(ws, i) }));
   const todayStr = toISODate(new Date());
   const label = `${fmtShort(ws)} – ${fmtShort(addDays(ws, 6))}, ${addDays(ws, 6).getFullYear()}`;
+  const dayOffSet = approvedDayOffSet();
 
   const dayHeaderCells = days.map((d) => `
     <th class="${toISODate(d.date) === todayStr ? 'is-today' : ''}">
       ${d.label}<br><span class="day-date">${fmtShort(d.date)}</span>
     </th>`).join('');
 
-  const homesRows = state.config.homes.map((home) => renderHomeRows(home, days, assignments)).join('');
-  const relieverRows = state.config.relievers.map((r) => renderRelieverRow(r, days, assignments)).join('');
+  const homesRows = state.config.homes.map((home) => renderHomeRows(home, days, assignments, dayOffSet)).join('');
+  const relieverRows = state.config.relievers.map((r) => renderRelieverRow(r, days, assignments, dayOffSet)).join('');
 
   const managePanel = state.manageOpen ? `
     <div id="managePanel" class="manage-panel no-print">
@@ -970,7 +1014,7 @@ async function renderSchedule() {
   `;
 }
 
-function renderHomeRows(home, days, assignments) {
+function renderHomeRows(home, days, assignments, dayOffSet) {
   const slots = [['cg1', 'Caregiver 1'], ['cg2', 'Caregiver 2'], ['night', 'Night Shift']];
   const homeData = assignments.homes[home.id] || {};
   return slots.map(([slotKey, slotLabel], idx) => `
@@ -980,19 +1024,21 @@ function renderHomeRows(home, days, assignments) {
       ${days.map((d) => {
         const dayData = homeData[d.key] || {};
         const val = dayData[slotKey] || '';
-        return `<td>${staffCell({ kind: 'home', home: home.id, day: d.key, slot: slotKey }, val)}</td>`;
+        const flagged = val && dayOffSet.has(`${toISODate(d.date)}|${val}`);
+        return `<td class="${flagged ? 'cell-dayoff' : ''}">${staffCell({ kind: 'home', home: home.id, day: d.key, slot: slotKey }, val, flagged)}</td>`;
       }).join('')}
     </tr>`).join('');
 }
 
-function renderRelieverRow(reliever, days, assignments) {
+function renderRelieverRow(reliever, days, assignments, dayOffSet) {
   const relData = assignments.relievers[reliever.id] || {};
   return `
     <tr>
       <th class="row-head" colspan="2">${esc(reliever.name)}</th>
       ${days.map((d) => {
         const val = relData[d.key] || '';
-        return `<td>${staffCell({ kind: 'reliever', reliever: reliever.id, day: d.key }, val)}</td>`;
+        const flagged = val && dayOffSet.has(`${toISODate(d.date)}|${val}`);
+        return `<td class="${flagged ? 'cell-dayoff' : ''}">${staffCell({ kind: 'reliever', reliever: reliever.id, day: d.key }, val, flagged)}</td>`;
       }).join('')}
     </tr>`;
 }
@@ -1000,7 +1046,9 @@ function renderRelieverRow(reliever, days, assignments) {
 // Schedule Board cells are dropdowns sourced from the staff directory, with
 // a "Custom name…" escape hatch for names not yet in the directory (and a
 // synthetic option so any pre-existing free-text value still displays).
-function staffCell(dataAttrs, val) {
+// `flagged` marks a cell whose assigned staff member has an approved day
+// off on that date, per Day Off Requests.
+function staffCell(dataAttrs, val, flagged) {
   const dataStr = Object.entries(dataAttrs).map(([k, v]) => `data-${k}="${esc(v)}"`).join(' ');
   const names = state.staff.map((s) => s.name);
   const knownOrBlank = val === '' || names.includes(val);
@@ -1008,7 +1056,69 @@ function staffCell(dataAttrs, val) {
   names.forEach((n) => opts.push(`<option value="${esc(n)}" ${n === val ? 'selected' : ''}>${esc(n)}</option>`));
   if (!knownOrBlank) opts.push(`<option value="${esc(val)}" selected>${esc(val)}</option>`);
   opts.push(`<option value="__custom__">+ Custom name…</option>`);
-  return `<select class="cell-input" ${dataStr}>${opts.join('')}</select>`;
+  const badge = flagged ? `<span class="dayoff-badge" title="Approved day off">🌴</span>` : '';
+  return `<select class="cell-input" ${dataStr}>${opts.join('')}</select>${badge}`;
+}
+
+// ---------------------------------------------------------------------------
+// Render — My Schedule (caregiver)
+// ---------------------------------------------------------------------------
+async function renderMySchedule() {
+  const me = state.staff.find((s) => s.id === state.staffMemberId);
+  if (!me) {
+    document.getElementById('view-schedule').innerHTML = `
+      <div class="placeholder-view" style="display:flex; min-height:40vh;">
+        <div class="placeholder">
+          <div class="placeholder-icon">🗓️</div>
+          <h2>My Schedule</h2>
+          <p>Your staff profile isn't linked to your login yet — ask your admin to finish setting it up in the Staff tab.</p>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const ws = weekStartForOffset(state.weekOffset);
+  const wsStr = toISODate(ws);
+  const assignments = await loadWeek(wsStr);
+  const days = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(ws, i) }));
+  const label = `${fmtShort(ws)} – ${fmtShort(addDays(ws, 6))}, ${addDays(ws, 6).getFullYear()}`;
+  const dayOffSet = approvedDayOffSet();
+
+  const rows = days.map((d) => {
+    const dISO = toISODate(d.date);
+    const shifts = [];
+    state.config.homes.forEach((home) => {
+      const dayData = (assignments.homes[home.id] || {})[d.key] || {};
+      [['cg1', 'Caregiver 1'], ['cg2', 'Caregiver 2'], ['night', 'Night Shift']].forEach(([slotKey, slotLabel]) => {
+        if (dayData[slotKey] === me.name) shifts.push(`${esc(home.name)} — ${slotLabel}`);
+      });
+    });
+    state.config.relievers.forEach((r) => {
+      const v = (assignments.relievers[r.id] || {})[d.key];
+      if (v === me.name) shifts.push(`Reliever — ${esc(r.name)}`);
+    });
+    const isDayOff = dayOffSet.has(`${dISO}|${me.name}`);
+    return `
+      <div class="shift-row">
+        <div class="shift-home">${d.label} <span class="day-date">${fmtShort(d.date)}</span></div>
+        <div class="shift-slots">
+          ${isDayOff ? `<span class="unfilled" style="color:var(--danger);">🌴 Approved day off</span>` : ''}
+          ${shifts.length ? shifts.map((s) => `<span class="filled">${s}</span>`).join('') : (isDayOff ? '' : `<span class="muted">Not scheduled</span>`)}
+        </div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('view-schedule').innerHTML = `
+    <div class="week-bar no-print">
+      <button class="btn-icon" data-action="prev-week" title="Previous week">‹</button>
+      <div class="week-label">${label}</div>
+      <button class="btn-icon" data-action="next-week" title="Next week">›</button>
+      <button class="btn-outline" data-action="today-week">Today</button>
+    </div>
+    <section class="card">
+      <h3>My Schedule — ${esc(me.name)}</h3>
+      ${rows}
+    </section>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1040,7 +1150,74 @@ function renderStaff() {
     <div class="list">
       ${state.staff.length ? state.staff.map(renderStaffRow).join('') : `<div class="muted">No staff added yet.</div>`}
     </div>
+
+    ${renderDayOffAdminSection()}
   `;
+}
+
+function renderDayOffAdminSection() {
+  const rows = state.dayOffRequests.slice().sort((a, b) => {
+    if ((a.status === 'pending') !== (b.status === 'pending')) return a.status === 'pending' ? -1 : 1;
+    return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+  });
+  return `
+    <h3 class="section-title">Day Off Requests</h3>
+    <div class="list">
+      ${rows.length ? rows.map(renderDayOffRow).join('') : `<div class="muted">No requests yet.</div>`}
+    </div>`;
+}
+
+function dayOffBadge(status) {
+  const color = status === 'approved' ? 'var(--positive)' : status === 'denied' ? 'var(--danger)' : 'var(--accent)';
+  return `<span style="color:${color}; font-weight:700; font-size:12px; text-transform:capitalize;">${status}</span>`;
+}
+
+function renderDayOffRow(r) {
+  const staff = state.staff.find((s) => s.id === r.staff_member_id);
+  return `
+    <div class="reminder-item">
+      <div class="reminder-body">
+        <div class="reminder-title">${esc(staff ? staff.name : 'Unknown staff')} — ${esc(r.date)}</div>
+        ${r.reason ? `<div class="reminder-note">${esc(r.reason)}</div>` : ''}
+      </div>
+      ${dayOffBadge(r.status)}
+      ${r.status === 'pending' ? `
+        <button class="btn-outline small" data-action="dayoff-approve" data-id="${r.id}">Approve</button>
+        <button class="btn-outline small" data-action="dayoff-deny" data-id="${r.id}">Deny</button>` : ''}
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Render — Day Off (caregiver)
+// ---------------------------------------------------------------------------
+function renderDayOff() {
+  document.getElementById('view-dayoff').innerHTML = `
+    <h3 class="section-title" style="margin-top:0;">Request a Day Off</h3>
+    <div class="card">
+      <form data-form="dayoff-request" class="inline-form">
+        <input type="date" name="date" required />
+        <input type="text" name="reason" placeholder="Reason (optional)" />
+        <button type="submit" class="btn-primary">Submit Request</button>
+      </form>
+    </div>
+
+    <h3 class="section-title">My Requests</h3>
+    <div class="list">
+      ${state.dayOffRequests.length ? state.dayOffRequests.map(renderMyDayOffRow).join('') : `<div class="muted">No requests yet.</div>`}
+    </div>
+  `;
+}
+
+function renderMyDayOffRow(r) {
+  return `
+    <div class="reminder-item">
+      <div class="reminder-body">
+        <div class="reminder-title">${esc(r.date)}</div>
+        ${r.reason ? `<div class="reminder-note">${esc(r.reason)}</div>` : ''}
+      </div>
+      ${dayOffBadge(r.status)}
+      ${r.status === 'pending' ? `<button class="btn-remove" data-action="dayoff-cancel" data-id="${r.id}">✕</button>` : ''}
+    </div>`;
 }
 
 function renderStaffRow(s) {
@@ -1258,6 +1435,15 @@ function onGlobalClick(e) {
       state.staffLoginFormId = null;
       renderStaff();
       break;
+    case 'dayoff-approve':
+      decideDayOffRequest(btn.dataset.id, 'approved');
+      break;
+    case 'dayoff-deny':
+      decideDayOffRequest(btn.dataset.id, 'denied');
+      break;
+    case 'dayoff-cancel':
+      cancelDayOffRequest(btn.dataset.id);
+      break;
     case 'auth-tab':
       state.authMode = btn.dataset.mode;
       renderAuth();
@@ -1300,6 +1486,13 @@ function onGlobalSubmit(e) {
     const password = fd.get('password');
     if (!email || !password) return;
     createStaffLogin(form.dataset.id, email, password);
+  } else if (form.dataset.form === 'dayoff-request') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const date = fd.get('date');
+    if (!date) return;
+    submitDayOffRequest(date, fd.get('reason').trim());
+    form.reset();
   } else if (form.id === 'authForm') {
     e.preventDefault();
     handleAuthSubmit(form);
