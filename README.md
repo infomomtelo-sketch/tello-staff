@@ -86,6 +86,52 @@ round's ask — see Parts 2–3 above. New work goes here.
   birthday. Schema change lives in a fresh `schema_v3.sql` rather than being
   appended to `schema_v2.sql`, per this round's instructions.
 
+**Part 2 — Schedule Board Upgrade**
+
+- **Gap-detection colors**: every Schedule Board cell (Homes and Reliever
+  Pool, week and month views) is now tinted — filled = green, empty = red,
+  approved day off = gray — instead of a plain background.
+- **Location per reliever slot**: each Reliever Pool day-cell is now a Name
+  dropdown *and* a Location dropdown (options = your configured homes, plus
+  a custom-value escape hatch), since relievers float between homes. No DB
+  migration needed — it's a shape change within the existing `assignments`
+  jsonb column (old plain-string reliever values still display correctly:
+  they're read as "name, no location").
+- **Monthly view (Reliever Pool only)**: a Week/Month toggle above the
+  Reliever Pool table. Month mode renders a read-only Sun–Sat calendar grid
+  (leading/trailing days from adjacent months included), each day cell
+  listing every reliever working that day (name + location) and anyone on
+  an approved day off. Live editing stays in Week mode — a full month of
+  inline dropdowns per reliever wouldn't be legible, especially on mobile.
+  The Homes board stays weekly-only (24 data points/day across 8 homes × 3
+  slots doesn't compact into a calendar cell the way a single reliever list
+  does).
+- Staff dropdown per slot was already in place from the prior round.
+
+**Part 3 — Day Off Request**
+
+No new work — already fully built in the prior round (caregiver submit/
+cancel, admin approve/deny, approved days flagged on the Schedule Board)
+and re-verified against this round's wording.
+
+**Part 4 — Tello AI Gap Resolver**
+
+- The **Chat** tab (previously a "coming in the next session" placeholder)
+  is now **Tello**: a rule-based gap resolver, not an LLM call — no new
+  infrastructure, works instantly, fully explainable.
+- For the displayed week (shared with the Schedule tab), it finds every
+  empty Home or Reliever Pool slot and suggests who's available: not
+  already assigned elsewhere that day, and no approved day off that date.
+  Suggestions are ranked by fewest shifts already assigned that week, to
+  spread hours fairly.
+- Each gap shows a plain-English explanation (e.g. "Jordan is available —
+  not assigned Aug 29, 2 shifts this week"), a dropdown of every other
+  available candidate to pick a different one, and an Assign button that
+  writes directly to that slot — same effect as filling it by hand on the
+  Schedule Board.
+- Pure function of the current roster/schedule/day-off data — no hardcoded
+  names, homes, or locations, so it works the same for any operator's data.
+
 ## Setup
 
 ### 1. Database (Supabase project `nwlhsshvqmbhemhxcran`)
