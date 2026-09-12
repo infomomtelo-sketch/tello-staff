@@ -67,21 +67,23 @@ needed for day-to-day coverage questions.
 
 ### 4. Cloudflare Pages
 
-- Project: `carehome-application-form` (default deploy URL
-  `https://carehome-application-form.pages.dev`), with custom domain
-  `https://title22.app` intended as the URL actually in use (`title-22.com`
-  / `title22.com` is a separate marketing site, not this app) — **verify
-  `title22.app` is listed and Active under the project's Custom domains
-  tab**; this was set from a verbal description, not confirmed against the
-  dashboard.
+- Project: `carehome-application-form`, deployed at
+  `https://carehome-application-form.pages.dev`.
+- **`title22.app` / `title-22.com` are NOT this app** — they belong to a
+  separate, already-live product ("Title22," a Title 22 compliance/
+  inspection tracker for RCFE/ARF facilities). Do not point this Pages
+  project's custom domain at either — that would overwrite the other live
+  site. If Tello Staff ever gets its own custom domain, update
+  `REDIRECT_URL` below and the Supabase redirect URL list to match; until
+  then the `*.pages.dev` URL is correct.
 - Production branch must be set to `claude/tello-staff-index-hn4amu` —
   `main` currently carries a different, unrelated in-progress rewrite of
   this app from another session.
 - Connect this repo, no build command, output directory = repo root.
   Cloudflare Pages auto-detects `functions/api/chat.js` and deploys it
   alongside the static site — no separate Worker to set up.
-- `REDIRECT_URL` in `index.html` is hardcoded to `https://title22.app` to
-  match. If the custom domain ever changes, update it there and add
+- `REDIRECT_URL` in `index.html` is hardcoded to
+  `https://carehome-application-form.pages.dev` to match. If it changes, add
   the new URL to Supabase → Authentication → URL Configuration → Redirect
   URLs (the old one can be removed from that list once nothing points at it).
 
