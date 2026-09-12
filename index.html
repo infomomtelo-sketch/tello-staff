@@ -236,6 +236,7 @@
   .placeholder-icon { font-size: 40px; margin-bottom: 12px; }
 
   /* ---------- Schedule view ---------- */
+  .print-only { display: none; }
   .week-bar {
     display: flex;
     align-items: center;
@@ -243,6 +244,28 @@
     flex-wrap: wrap;
     margin-bottom: 16px;
   }
+  .home-select {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    max-width: 180px;
+  }
+  .view-toggle { display: flex; background: var(--bg-input); border-radius: 8px; padding: 3px; }
+  .view-toggle button {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .view-toggle button.active { background: var(--accent); color: var(--accent-contrast); }
   .week-label { font-weight: 700; font-size: 15px; flex: 1; text-align: center; min-width: 160px; }
   .section-title { margin-top: 28px; margin-bottom: 12px; font-size: 16px; }
 
@@ -294,15 +317,46 @@
     white-space: nowrap;
     font-size: 12px;
   }
-  .schedule-grid td.slot-label.is-night { color: var(--accent); }
-  .schedule-grid td { background: var(--bg-page); min-width: 96px; }
-  .cell-input {
+  .schedule-grid td { background: var(--bg-page); min-width: 130px; vertical-align: top; }
+
+  .day-input {
+    width: 100%;
     border: none !important;
     background: transparent !important;
+    color: var(--text);
+    font-size: 12px;
+    font-family: inherit;
+    resize: none;
     padding: 4px !important;
-    width: 100%;
+    line-height: 1.35;
   }
-  .cell-input:focus { outline: 1px solid var(--accent); border-radius: 4px; }
+  .day-input:focus { outline: 1px solid var(--accent); border-radius: 4px; }
+  .day-input::placeholder { color: #557064; }
+  .week-working-input { height: 76px; }
+  .week-dayoff-input { height: 44px; }
+
+  /* Monthly calendar (per home, matches the printed wall schedule) */
+  table.month-grid { border-collapse: collapse; width: 100%; min-width: 700px; table-layout: fixed; }
+  .month-grid th {
+    background: var(--bg-elevated);
+    padding: 6px;
+    text-align: center;
+    font-size: 12px;
+    border: 1px solid var(--border);
+  }
+  .month-grid td {
+    border: 1px solid var(--border);
+    vertical-align: top;
+    padding: 3px;
+    height: 108px;
+    background: var(--bg-page);
+  }
+  .month-grid td.month-pad { background: var(--bg-card); opacity: 0.35; }
+  .month-grid td.is-today { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .month-cell-date { font-size: 11px; font-weight: 700; color: var(--text-muted); margin: 1px 2px; }
+  .month-grid td.is-today .month-cell-date { color: var(--accent); }
+  .month-working-input { height: 46px; }
+  .month-dayoff-input { height: 26px; border-top: 1px dashed var(--border) !important; }
 
   /* ---------- Today view ---------- */
   .today-date { font-size: 20px; font-weight: 800; margin-bottom: 16px; }
@@ -399,13 +453,18 @@
   @media print {
     body { background: #fff; }
     .no-print { display: none !important; }
-    .schedule-grid, .schedule-grid * {
+    .print-only { display: block; }
+    .print-title { margin-bottom: 12px; }
+    .print-title h2 { margin: 0 0 2px; }
+    .schedule-grid, .schedule-grid *,
+    .month-grid, .month-grid * {
       color: #000 !important;
       background: #fff !important;
-      border-color: #bbb !important;
+      border-color: #999 !important;
     }
-    .schedule-grid input { border: none !important; background: transparent !important; }
-    .section-title, .week-label { color: #000 !important; }
+    .schedule-grid td.month-pad, .month-grid td.month-pad { background: #f2f2f2 !important; }
+    .day-input { border: none !important; background: transparent !important; }
+    .section-title, .week-label, .print-title { color: #000 !important; }
     .app-main { padding-bottom: 0; }
   }
 </style>
@@ -494,9 +553,11 @@ const state = {
   tab: 'schedule',
   authMode: 'signin',
   config: { homes: [], relievers: [] },
+  scheduleView: 'week',
   weekOffset: 0,
+  monthOffset: 0,
+  selectedHomeId: null,
   manageOpen: false,
-  scheduleCache: {},
   reminders: [],
   birthdays: [],
   chatMessages: [],
@@ -505,6 +566,7 @@ const state = {
 
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_LABELS_SUN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 let appEntered = false;
 
 // ---------------------------------------------------------------------------
@@ -548,15 +610,29 @@ function weekStartForOffset(offset) {
   return addDays(startOfWeek(new Date()), offset * 7);
 }
 
+function addMonths(date, n) {
+  return new Date(date.getFullYear(), date.getMonth() + n, 1);
+}
+
+// Sunday-first weeks of a month, matching the printed wall calendar. Days
+// outside the month are represented as null (blank cells, like the paper).
+function monthGridWeeks(year, monthIndex) {
+  const startPad = new Date(year, monthIndex, 1).getDay();
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startPad; i += 1) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d += 1) cells.push(new Date(year, monthIndex, d));
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
+}
+
 function defaultConfig() {
   return {
     homes: Array.from({ length: 8 }, (_, i) => ({ id: crypto.randomUUID(), name: `Home ${i + 1}` })),
     relievers: Array.from({ length: 11 }, (_, i) => ({ id: crypto.randomUUID(), name: `Reliever ${i + 1}` })),
   };
-}
-
-function emptyAssignments() {
-  return { homes: {}, relievers: {} };
 }
 
 // ---------------------------------------------------------------------------
@@ -651,6 +727,9 @@ async function loadConfig(userId) {
     state.config = defaultConfig();
     await saveConfig();
   }
+  if (state.config.homes.length && !state.config.homes.some((h) => h.id === state.selectedHomeId)) {
+    state.selectedHomeId = state.config.homes[0].id;
+  }
 }
 
 async function saveConfig() {
@@ -664,32 +743,57 @@ async function saveConfig() {
 }
 
 // ---------------------------------------------------------------------------
-// Data — weekly schedule
+// Data — day-by-day schedule (Working / Day Off per home or reliever, per date)
 // ---------------------------------------------------------------------------
-async function loadWeek(weekStartStr) {
-  if (state.scheduleCache[weekStartStr]) return state.scheduleCache[weekStartStr];
-  const { data, error } = await sb.from('tello_staff_schedule').select('*')
-    .eq('user_id', state.user.id).eq('week_start', weekStartStr).maybeSingle();
+// Fetches fresh from Supabase every call rather than caching — this is a
+// single-admin, low-traffic tool, and per-day rows make "is this cached yet"
+// ambiguous (a missing row is a valid "nothing scheduled" state). Returns
+// { [entityId]: { [dateStr]: { working, day_off } } }.
+async function fetchDaysForEntities(entityKind, entityIds, startStr, endStr) {
+  if (!entityIds.length) return {};
+  const { data, error } = await sb.from('tello_staff_schedule_days').select('*')
+    .eq('user_id', state.user.id)
+    .eq('entity_kind', entityKind)
+    .in('entity_id', entityIds)
+    .gte('date', startStr)
+    .lte('date', endStr);
   if (error) console.error(error);
-  const assignments = (data && data.assignments) || emptyAssignments();
-  state.scheduleCache[weekStartStr] = assignments;
-  return assignments;
+  const map = {};
+  (data || []).forEach((row) => {
+    map[row.entity_id] = map[row.entity_id] || {};
+    map[row.entity_id][row.date] = { working: row.working || '', day_off: row.day_off || '' };
+  });
+  return map;
 }
 
-let saveScheduleTimer = null;
-function queueSaveWeek(weekStartStr) {
-  clearTimeout(saveScheduleTimer);
-  saveScheduleTimer = setTimeout(() => saveWeek(weekStartStr), 500);
+// The DOM inputs are the live source of truth while typing (no in-memory
+// mirror needed) — on save we read both sibling fields for the same
+// entity/date so editing one never clobbers the other.
+const saveDayTimers = {};
+function queueSaveDay(entity, entityId, dateStr) {
+  const key = `${entity}:${entityId}:${dateStr}`;
+  clearTimeout(saveDayTimers[key]);
+  saveDayTimers[key] = setTimeout(() => saveDay(entity, entityId, dateStr), 500);
 }
 
-async function saveWeek(weekStartStr) {
-  const assignments = state.scheduleCache[weekStartStr] || emptyAssignments();
-  const { error } = await sb.from('tello_staff_schedule').upsert({
+function dayFieldEl(entity, entityId, dateStr, field) {
+  return document.querySelector(
+    `.day-input[data-entity="${entity}"][data-entity-id="${entityId}"][data-date="${dateStr}"][data-field="${field}"]`
+  );
+}
+
+async function saveDay(entity, entityId, dateStr) {
+  const workingEl = dayFieldEl(entity, entityId, dateStr, 'working');
+  const dayOffEl = dayFieldEl(entity, entityId, dateStr, 'day_off');
+  const { error } = await sb.from('tello_staff_schedule_days').upsert({
     user_id: state.user.id,
-    week_start: weekStartStr,
-    assignments,
+    entity_kind: entity,
+    entity_id: entityId,
+    date: dateStr,
+    working: workingEl ? workingEl.value : '',
+    day_off: dayOffEl ? dayOffEl.value : '',
     updated_at: new Date().toISOString(),
-  }, { onConflict: 'user_id,week_start' });
+  }, { onConflict: 'user_id,entity_kind,entity_id,date' });
   if (error) console.error(error);
 }
 
@@ -766,27 +870,41 @@ async function loadChatMessages() {
 async function buildScheduleContext() {
   const now = new Date();
   const ws = startOfWeek(now);
-  const assignments = await loadWeek(toISODate(ws));
   const days = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(ws, i) }));
+  const startStr = toISODate(ws);
+  const endStr = toISODate(addDays(ws, 6));
+
+  const homeIds = state.config.homes.map((h) => h.id);
+  const relieverIds = state.config.relievers.map((r) => r.id);
+  const homeMap = await fetchDaysForEntities('home', homeIds, startStr, endStr);
+  const relieverMap = await fetchDaysForEntities('reliever', relieverIds, startStr, endStr);
 
   const lines = [];
   lines.push(`Today is ${fmtLong(now)}.`);
   lines.push(`This week runs ${fmtShort(ws)} to ${fmtShort(addDays(ws, 6))}.`);
   lines.push('');
-  lines.push("HOMES THIS WEEK (— means unfilled):");
+  lines.push('HOMES THIS WEEK ((empty) means nobody scheduled):');
   state.config.homes.forEach((home) => {
-    const hd = assignments.homes[home.id] || {};
+    const hd = homeMap[home.id] || {};
     lines.push(`${home.name}:`);
     days.forEach((d) => {
-      const day = hd[d.key] || {};
-      lines.push(`  ${d.label} ${fmtShort(d.date)} — CG1: ${day.cg1 || '—'} | CG2: ${day.cg2 || '—'} | Night: ${day.night || '—'}`);
+      const dateStr = toISODate(d.date);
+      const cell = hd[dateStr] || { working: '', day_off: '' };
+      const working = cell.working.replace(/\n/g, ', ').trim();
+      const dayOff = cell.day_off.replace(/\n/g, ', ').trim();
+      lines.push(`  ${d.label} ${fmtShort(d.date)} — Working: ${working || '(none)'}${dayOff ? ` | Day off: ${dayOff}` : ''}`);
     });
   });
   lines.push('');
   lines.push('RELIEVER POOL THIS WEEK:');
   state.config.relievers.forEach((r) => {
-    const rd = assignments.relievers[r.id] || {};
-    const deployed = days.map((d) => (rd[d.key] ? `${d.label}: ${rd[d.key]}` : null)).filter(Boolean);
+    const rd = relieverMap[r.id] || {};
+    const deployed = days
+      .map((d) => {
+        const val = (rd[toISODate(d.date)] || {}).working;
+        return val ? `${d.label}: ${val}` : null;
+      })
+      .filter(Boolean);
     lines.push(`  ${r.name} — ${deployed.length ? deployed.join(', ') : 'no deployments logged this week'}`);
   });
   lines.push('');
@@ -860,20 +978,52 @@ function renderApp() {
 // Render — Schedule board
 // ---------------------------------------------------------------------------
 async function renderSchedule() {
-  const ws = weekStartForOffset(state.weekOffset);
-  const wsStr = toISODate(ws);
-  const assignments = await loadWeek(wsStr);
-  const days = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(ws, i) }));
+  if (state.config.homes.length && !state.config.homes.some((h) => h.id === state.selectedHomeId)) {
+    state.selectedHomeId = state.config.homes[0].id;
+  }
+  const home = state.config.homes.find((h) => h.id === state.selectedHomeId) || null;
   const todayStr = toISODate(new Date());
-  const label = `${fmtShort(ws)} – ${fmtShort(addDays(ws, 6))}, ${addDays(ws, 6).getFullYear()}`;
 
-  const dayHeaderCells = days.map((d) => `
+  let periodLabel = '';
+  let gridHtml = `<div class="muted">Add a home in Manage to start scheduling.</div>`;
+
+  if (home) {
+    if (state.scheduleView === 'week') {
+      const ws = weekStartForOffset(state.weekOffset);
+      const days = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(ws, i) }));
+      const startStr = toISODate(ws);
+      const endStr = toISODate(addDays(ws, 6));
+      periodLabel = `${fmtShort(ws)} – ${fmtShort(addDays(ws, 6))}, ${addDays(ws, 6).getFullYear()}`;
+      const homeMap = (await fetchDaysForEntities('home', [home.id], startStr, endStr))[home.id] || {};
+      gridHtml = renderHomeWeekTable(days, homeMap, todayStr);
+    } else {
+      const mo = addMonths(new Date(), state.monthOffset);
+      const year = mo.getFullYear();
+      const monthIndex = mo.getMonth();
+      const weeks = monthGridWeeks(year, monthIndex);
+      const startStr = toISODate(new Date(year, monthIndex, 1));
+      const endStr = toISODate(new Date(year, monthIndex + 1, 0));
+      periodLabel = mo.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      const homeMap = (await fetchDaysForEntities('home', [home.id], startStr, endStr))[home.id] || {};
+      gridHtml = renderHomeMonthTable(weeks, homeMap, todayStr, home.id);
+    }
+  }
+
+  // Reliever pool always shows the current real week — a short-horizon
+  // floating resource, not something browsed by month.
+  const thisWeekStart = startOfWeek(new Date());
+  const thisWeekDays = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(thisWeekStart, i) }));
+  const relieverIds = state.config.relievers.map((r) => r.id);
+  const relieverMap = await fetchDaysForEntities(
+    'reliever', relieverIds, toISODate(thisWeekStart), toISODate(addDays(thisWeekStart, 6))
+  );
+  const relieverRows = state.config.relievers
+    .map((r) => renderRelieverWeekRow(r, thisWeekDays, relieverMap[r.id] || {}))
+    .join('');
+  const relieverDayHeaders = thisWeekDays.map((d) => `
     <th class="${toISODate(d.date) === todayStr ? 'is-today' : ''}">
       ${d.label}<br><span class="day-date">${fmtShort(d.date)}</span>
     </th>`).join('');
-
-  const homesRows = state.config.homes.map((home) => renderHomeRows(home, days, assignments)).join('');
-  const relieverRows = state.config.relievers.map((r) => renderRelieverRow(r, days, assignments)).join('');
 
   const managePanel = state.manageOpen ? `
     <div id="managePanel" class="manage-panel no-print">
@@ -903,53 +1053,98 @@ async function renderSchedule() {
 
   document.getElementById('view-schedule').innerHTML = `
     <div class="week-bar no-print">
-      <button class="btn-icon" data-action="prev-week" title="Previous week">‹</button>
-      <div class="week-label">${label}</div>
-      <button class="btn-icon" data-action="next-week" title="Next week">›</button>
-      <button class="btn-outline" data-action="today-week">Today</button>
+      <select class="home-select" data-kind="select-home">
+        ${state.config.homes.map((h) => `<option value="${h.id}" ${h.id === state.selectedHomeId ? 'selected' : ''}>${esc(h.name)}</option>`).join('')}
+      </select>
+      <div class="view-toggle">
+        <button data-action="view-week" class="${state.scheduleView === 'week' ? 'active' : ''}">Week</button>
+        <button data-action="view-month" class="${state.scheduleView === 'month' ? 'active' : ''}">Month</button>
+      </div>
+      <button class="btn-icon" data-action="prev-period" title="Previous">‹</button>
+      <div class="week-label">${periodLabel}</div>
+      <button class="btn-icon" data-action="next-period" title="Next">›</button>
+      <button class="btn-outline" data-action="today-period">Today</button>
       <button class="btn-outline" data-action="manage-toggle">⚙ Manage</button>
       <button class="btn-outline" data-action="print">🖨 Print</button>
     </div>
     ${managePanel}
-    <div class="grid-wrap">
-      <table class="schedule-grid" id="homesTable">
-        <thead><tr><th class="row-head">Home</th><th class="row-head">Shift</th>${dayHeaderCells}</tr></thead>
-        <tbody>${homesRows}</tbody>
-      </table>
+    <div class="print-only print-title">
+      <h2>${esc(home ? home.name : 'Tello Staff')}</h2>
+      <div>${periodLabel}</div>
     </div>
-    <h3 class="section-title">Reliever Pool</h3>
-    <div class="grid-wrap">
+    ${gridHtml}
+    <h3 class="section-title">Reliever Pool — This Week</h3>
+    <div class="grid-wrap no-print">
       <table class="schedule-grid" id="relieversTable">
-        <thead><tr><th class="row-head" colspan="2">Reliever</th>${dayHeaderCells}</tr></thead>
+        <thead><tr><th class="row-head">Reliever</th>${relieverDayHeaders}</tr></thead>
         <tbody>${relieverRows}</tbody>
       </table>
     </div>
   `;
 }
 
-function renderHomeRows(home, days, assignments) {
-  const slots = [['cg1', 'Caregiver 1'], ['cg2', 'Caregiver 2'], ['night', 'Night Shift']];
-  const homeData = assignments.homes[home.id] || {};
-  return slots.map(([slotKey, slotLabel], idx) => `
+function renderHomeWeekTable(days, homeMap, todayStr) {
+  const dayHeaderCells = days.map((d) => `
+    <th class="${toISODate(d.date) === todayStr ? 'is-today' : ''}">
+      ${d.label}<br><span class="day-date">${fmtShort(d.date)}</span>
+    </th>`).join('');
+
+  const fieldRow = (field, label, cssClass) => `
     <tr>
-      ${idx === 0 ? `<th class="row-head" rowspan="3">${esc(home.name)}</th>` : ''}
-      <td class="slot-label ${slotKey === 'night' ? 'is-night' : ''}">${slotLabel}</td>
+      <td class="slot-label">${label}</td>
       ${days.map((d) => {
-        const dayData = homeData[d.key] || {};
-        const val = dayData[slotKey] || '';
-        return `<td><input type="text" class="cell-input" data-kind="home" data-home="${home.id}" data-day="${d.key}" data-slot="${slotKey}" value="${esc(val)}" placeholder="—" /></td>`;
+        const dateStr = toISODate(d.date);
+        const val = (homeMap[dateStr] || {})[field] || '';
+        return `<td><textarea class="day-input ${cssClass}" data-entity="home" data-entity-id="${state.selectedHomeId}" data-date="${dateStr}" data-field="${field}" placeholder="—">${esc(val)}</textarea></td>`;
       }).join('')}
-    </tr>`).join('');
+    </tr>`;
+
+  return `
+    <div class="grid-wrap">
+      <table class="schedule-grid" id="homeWeekTable">
+        <thead><tr><th class="row-head">Field</th>${dayHeaderCells}</tr></thead>
+        <tbody>
+          ${fieldRow('working', 'Working', 'week-working-input')}
+          ${fieldRow('day_off', 'Day Off', 'week-dayoff-input')}
+        </tbody>
+      </table>
+    </div>`;
 }
 
-function renderRelieverRow(reliever, days, assignments) {
-  const relData = assignments.relievers[reliever.id] || {};
+function renderHomeMonthTable(weeks, homeMap, todayStr, homeId) {
+  const headerCells = DAY_LABELS_SUN.map((label) => `<th>${label}</th>`).join('');
+  const bodyRows = weeks.map((week) => `
+    <tr>
+      ${week.map((date) => {
+        if (!date) return `<td class="month-pad"></td>`;
+        const dateStr = toISODate(date);
+        const cell = homeMap[dateStr] || { working: '', day_off: '' };
+        return `
+          <td class="${dateStr === todayStr ? 'is-today' : ''}">
+            <div class="month-cell-date">${date.getDate()}</div>
+            <textarea class="day-input month-working-input" data-entity="home" data-entity-id="${homeId}" data-date="${dateStr}" data-field="working" placeholder="Working">${esc(cell.working)}</textarea>
+            <textarea class="day-input month-dayoff-input" data-entity="home" data-entity-id="${homeId}" data-date="${dateStr}" data-field="day_off" placeholder="Day off">${esc(cell.day_off)}</textarea>
+          </td>`;
+      }).join('')}
+    </tr>`).join('');
+
+  return `
+    <div class="grid-wrap">
+      <table class="month-grid" id="homeMonthTable">
+        <thead><tr>${headerCells}</tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderRelieverWeekRow(reliever, days, relieverDayMap) {
   return `
     <tr>
-      <th class="row-head" colspan="2">${esc(reliever.name)}</th>
+      <th class="row-head">${esc(reliever.name)}</th>
       ${days.map((d) => {
-        const val = relData[d.key] || '';
-        return `<td><input type="text" class="cell-input" data-kind="reliever" data-reliever="${reliever.id}" data-day="${d.key}" value="${esc(val)}" placeholder="—" /></td>`;
+        const dateStr = toISODate(d.date);
+        const val = (relieverDayMap[dateStr] || {}).working || '';
+        return `<td><input type="text" class="day-input" data-entity="reliever" data-entity-id="${reliever.id}" data-date="${dateStr}" data-field="working" value="${esc(val)}" placeholder="—" /></td>`;
       }).join('')}
     </tr>`;
 }
@@ -959,29 +1154,28 @@ function renderRelieverRow(reliever, days, assignments) {
 // ---------------------------------------------------------------------------
 async function renderToday() {
   const now = new Date();
-  const todayWs = toISODate(startOfWeek(now));
-  const assignments = await loadWeek(todayWs);
-  const dayKey = DAY_KEYS[(now.getDay() + 6) % 7];
-
-  const cell = (v, isNight) => v
-    ? `<span class="filled ${isNight ? 'night' : ''}">${esc(v)}</span>`
-    : `<span class="unfilled">unfilled</span>`;
+  const todayStr = toISODate(now);
+  const homeIds = state.config.homes.map((h) => h.id);
+  const relieverIds = state.config.relievers.map((r) => r.id);
+  const homeMap = await fetchDaysForEntities('home', homeIds, todayStr, todayStr);
+  const relieverMap = await fetchDaysForEntities('reliever', relieverIds, todayStr, todayStr);
 
   const shiftRows = state.config.homes.map((home) => {
-    const d = (assignments.homes[home.id] || {})[dayKey] || {};
+    const cell = (homeMap[home.id] || {})[todayStr] || { working: '', day_off: '' };
+    const working = cell.working.trim();
+    const dayOff = cell.day_off.trim();
     return `
       <div class="shift-row">
         <div class="shift-home">${esc(home.name)}</div>
         <div class="shift-slots">
-          <div>CG1: ${cell(d.cg1)}</div>
-          <div>CG2: ${cell(d.cg2)}</div>
-          <div>Night: ${cell(d.night, true)}</div>
+          <div>Working: ${working ? `<span class="filled">${esc(working).replace(/\n/g, '<br>')}</span>` : `<span class="unfilled">no one scheduled</span>`}</div>
+          ${dayOff ? `<div>Day off: <span class="filled">${esc(dayOff).replace(/\n/g, '<br>')}</span></div>` : ''}
         </div>
       </div>`;
   }).join('');
 
   const relieverToday = state.config.relievers
-    .map((r) => ({ r, v: (assignments.relievers[r.id] || {})[dayKey] }))
+    .map((r) => ({ r, v: ((relieverMap[r.id] || {})[todayStr] || {}).working }))
     .filter((x) => x.v)
     .map((x) => `<div class="reliever-today-row"><b>${esc(x.r.name)}</b>: ${esc(x.v)}</div>`)
     .join('') || `<div class="muted">No relievers deployed today.</div>`;
@@ -1099,16 +1293,24 @@ function onGlobalClick(e) {
     case 'sign-out':
       handleSignOut();
       break;
-    case 'prev-week':
-      state.weekOffset -= 1;
+    case 'view-week':
+      state.scheduleView = 'week';
       renderSchedule();
       break;
-    case 'next-week':
-      state.weekOffset += 1;
+    case 'view-month':
+      state.scheduleView = 'month';
       renderSchedule();
       break;
-    case 'today-week':
-      state.weekOffset = 0;
+    case 'prev-period':
+      if (state.scheduleView === 'week') state.weekOffset -= 1; else state.monthOffset -= 1;
+      renderSchedule();
+      break;
+    case 'next-period':
+      if (state.scheduleView === 'week') state.weekOffset += 1; else state.monthOffset += 1;
+      renderSchedule();
+      break;
+    case 'today-period':
+      if (state.scheduleView === 'week') state.weekOffset = 0; else state.monthOffset = 0;
       renderSchedule();
       break;
     case 'manage-toggle':
@@ -1190,21 +1392,9 @@ function onGlobalSubmit(e) {
 
 function onGlobalInput(e) {
   const t = e.target;
-  if (!t.classList.contains('cell-input')) return;
-  const ws = weekStartForOffset(state.weekOffset);
-  const wsStr = toISODate(ws);
-  const assignments = state.scheduleCache[wsStr] || (state.scheduleCache[wsStr] = emptyAssignments());
-  if (t.dataset.kind === 'home') {
-    const { home, day, slot } = t.dataset;
-    assignments.homes[home] = assignments.homes[home] || {};
-    assignments.homes[home][day] = assignments.homes[home][day] || {};
-    assignments.homes[home][day][slot] = t.value;
-  } else if (t.dataset.kind === 'reliever') {
-    const { reliever, day } = t.dataset;
-    assignments.relievers[reliever] = assignments.relievers[reliever] || {};
-    assignments.relievers[reliever][day] = t.value;
-  }
-  queueSaveWeek(wsStr);
+  if (!t.classList.contains('day-input')) return;
+  const { entity, entityId, date } = t.dataset;
+  queueSaveDay(entity, entityId, date);
 }
 
 function onGlobalChange(e) {
@@ -1217,6 +1407,9 @@ function onGlobalChange(e) {
   } else if (t.dataset.kind === 'reliever-name') {
     const rel = state.config.relievers.find((r) => r.id === t.dataset.id);
     if (rel) { rel.name = t.value; saveConfig(); renderSchedule(); }
+  } else if (t.dataset.kind === 'select-home') {
+    state.selectedHomeId = t.value;
+    renderSchedule();
   }
 }
 

@@ -9,9 +9,14 @@ chat endpoint — no client-side build step, matching the other RunP8 apps.
 
 ## What's built
 
-- **Schedule Board** — configurable homes (default 8), each with Caregiver 1 /
-  Caregiver 2 / Night Shift slots, an 11-slot reliever pool, a Mon–Sun weekly
-  view, and a printable layout.
+- **Schedule Board** — configurable homes (default 8), one selected at a time,
+  each with a free-text "Working" and "Day Off" list per day (any number of
+  names — type "Manpreet (N)" for a night shift, "Nelia (T)" for a trainee,
+  whatever notation you already use) instead of fixed slots, matching how the
+  schedule is actually kept on paper. Week view (Mon–Sun) for quick edits,
+  Month view (Sunday-first, like a wall calendar) for the printable page that
+  actually goes up on the board. An 11-slot reliever pool floats alongside it
+  as its own always-current-week grid.
 - **Today's Board** — today's date, admin-added reminder cards (title, note,
   due time), manually-entered staff birthdays, and a shift summary pulled
   live from the Schedule Board.
@@ -28,9 +33,13 @@ chat endpoint — no client-side build step, matching the other RunP8 apps.
 ### 1. Database (Supabase project `nwlhsshvqmbhemhxcran`)
 
 Paste `schema.sql` into the Supabase SQL editor and run it. It creates five
-tables (`tello_staff_config`, `tello_staff_schedule`, `tello_staff_reminders`,
-`tello_staff_birthdays`, `tello_staff_chat_messages`), each with RLS scoped to
-`auth.uid()`, and is safe to re-run.
+tables (`tello_staff_config`, `tello_staff_schedule_days`,
+`tello_staff_reminders`, `tello_staff_birthdays`, `tello_staff_chat_messages`),
+each with RLS scoped to `auth.uid()`, and is safe to re-run. If you ran an
+earlier version of this schema, `tello_staff_schedule_days` (day-by-day) is
+new and replaces the old `tello_staff_schedule` (one JSONB blob per week) —
+the script leaves the old table alone since it doesn't know whether it holds
+data you still want; drop it yourself once you've checked.
 
 ### 2. Fill in the anon key
 
@@ -70,7 +79,10 @@ needed for day-to-day coverage questions.
 
 - All data is scoped per signed-in user via Supabase RLS — one admin account
   today, matching the current single-user usage.
-- Reliever pool "slots" are just a nameable roster with their own Mon–Sun
-  grid, same as homes — type where a reliever is deployed into any cell.
+- Reliever pool "slots" are just a nameable roster with their own always-
+  current-week grid — type where a reliever is deployed into any cell.
+- Month view only exists for the selected home's calendar; the reliever pool
+  stays week-only since it's a short-horizon floating resource, not something
+  browsed by month.
 - Chat has no Staff directory to draw on yet (that's a future session), so it
   only knows names as they appear typed into the Schedule Board.

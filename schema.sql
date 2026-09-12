@@ -1,6 +1,13 @@
--- Tello Staff — Session 1 schema (Schedule Board + Today's Board)
--- Run in the Supabase SQL editor for project nwlhsshvqmbhemhxcran.
--- Safe to run more than once.
+-- Tello Staff schema. Run in the Supabase SQL editor for project
+-- nwlhsshvqmbhemhxcran. Safe to run more than once.
+--
+-- NOTE: tello_staff_schedule (a JSONB blob per week, fixed CG1/CG2/Night
+-- slots) has been replaced by tello_staff_schedule_days below — a flexible
+-- day-by-day roster (free-text "Working" and "Day Off" lists per home/date)
+-- matching how the schedule is actually kept on paper. This script does NOT
+-- drop the old table — if you ran an earlier version of this schema and have
+-- no data in tello_staff_schedule worth keeping, you can drop it yourself:
+--   drop table if exists tello_staff_schedule;
 
 create table if not exists tello_staff_config (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -9,14 +16,22 @@ create table if not exists tello_staff_config (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists tello_staff_schedule (
+-- One row per (home or reliever) per calendar date. entity_id is a home or
+-- reliever id from tello_staff_config's homes/relievers JSONB, not an FK —
+-- those ids live in JSONB, not their own table.
+create table if not exists tello_staff_schedule_days (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  week_start date not null,
-  assignments jsonb not null default '{}'::jsonb,
+  entity_kind text not null check (entity_kind in ('home', 'reliever')),
+  entity_id text not null,
+  date date not null,
+  working text not null default '',
+  day_off text not null default '',
   updated_at timestamptz not null default now(),
-  unique (user_id, week_start)
+  unique (user_id, entity_kind, entity_id, date)
 );
+create index if not exists tello_staff_schedule_days_lookup
+  on tello_staff_schedule_days (user_id, entity_kind, entity_id, date);
 
 create table if not exists tello_staff_reminders (
   id uuid primary key default gen_random_uuid(),
@@ -46,7 +61,7 @@ create table if not exists tello_staff_chat_messages (
 );
 
 alter table tello_staff_config enable row level security;
-alter table tello_staff_schedule enable row level security;
+alter table tello_staff_schedule_days enable row level security;
 alter table tello_staff_reminders enable row level security;
 alter table tello_staff_birthdays enable row level security;
 alter table tello_staff_chat_messages enable row level security;
@@ -55,8 +70,8 @@ drop policy if exists "own config" on tello_staff_config;
 create policy "own config" on tello_staff_config
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
-drop policy if exists "own schedule" on tello_staff_schedule;
-create policy "own schedule" on tello_staff_schedule
+drop policy if exists "own schedule days" on tello_staff_schedule_days;
+create policy "own schedule days" on tello_staff_schedule_days
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 drop policy if exists "own reminders" on tello_staff_reminders;
