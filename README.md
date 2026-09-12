@@ -67,17 +67,18 @@ needed for day-to-day coverage questions.
 
 ### 4. Cloudflare Pages
 
-- Project: `carehome-application-form`, deployed at
-  `https://carehome-application-form.pages.dev`.
+- Project: `carehome-application-form` (default deploy URL
+  `https://carehome-application-form.pages.dev`), with custom domain
+  `https://title-22.com` attached under the project's Custom domains tab —
+  that's the URL actually in use.
 - Production branch must be set to `claude/tello-staff-index-hn4amu` —
   `main` currently carries a different, unrelated in-progress rewrite of
   this app from another session.
 - Connect this repo, no build command, output directory = repo root.
   Cloudflare Pages auto-detects `functions/api/chat.js` and deploys it
   alongside the static site — no separate Worker to set up.
-- `REDIRECT_URL` in `index.html` is hardcoded to
-  `https://carehome-application-form.pages.dev` to match. If the Pages
-  project is ever recreated under a different URL, update it there and add
+- `REDIRECT_URL` in `index.html` is hardcoded to `https://title-22.com` to
+  match. If the custom domain ever changes, update it there and add
   the new URL to Supabase → Authentication → URL Configuration → Redirect
   URLs (the old one can be removed from that list once nothing points at it).
 
