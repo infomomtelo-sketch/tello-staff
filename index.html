@@ -390,6 +390,47 @@
   .birthday-tag { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
   .birthday-item.today .birthday-tag { color: var(--accent); font-weight: 700; }
 
+  /* ---------- Chat view ---------- */
+  .card-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .card-header-row h3 { margin: 0; }
+  .chat-card { display: flex; flex-direction: column; }
+  .chat-messages {
+    display: flex; flex-direction: column; gap: 10px;
+    max-height: 55vh; overflow-y: auto;
+    padding: 4px 2px; margin-bottom: 12px;
+  }
+  .chat-bubble {
+    max-width: 85%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    font-size: 14px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+  }
+  .chat-bubble.user {
+    align-self: flex-end;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    border-bottom-right-radius: 4px;
+    font-weight: 600;
+  }
+  .chat-bubble.assistant {
+    align-self: flex-start;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+  .chat-bubble.pending { color: var(--text-muted); font-style: italic; }
+  .chat-bubble.error {
+    align-self: flex-start;
+    background: rgba(229, 114, 107, 0.15);
+    border: 1px solid var(--danger);
+    color: #f3b3ae;
+  }
+  .chat-empty { color: var(--text-muted); font-size: 13px; text-align: center; padding: 24px 0; }
+  .chat-input-bar { display: flex; gap: 8px; }
+  .chat-input-bar input { flex: 1; }
+
   @media (max-width: 600px) {
     .app-main { padding: 12px; padding-bottom: 90px; }
     .week-label { order: -1; width: 100%; }
@@ -511,6 +552,9 @@ const state = {
   manageOpen: false,
   scheduleCache: {},
   reminders: [],
+  birthdays: [],
+  chatMessages: [],
+  chatSending: false,
   staff: [],
   staffLoginFormId: null,
   dayOffRequests: [],
@@ -663,6 +707,8 @@ async function enterApp(user) {
     await loadStaff();
     await loadDayOffRequests();
     await loadReminders();
+    await loadBirthdays();
+    await loadChatMessages();
   }
   renderApp();
 }
@@ -999,6 +1045,99 @@ function suggestForGap(gap, assignments, dayOffSet) {
 
 
 // ---------------------------------------------------------------------------
+// Data — chat (Ask Tello)
+// ---------------------------------------------------------------------------
+async function loadChatMessages() {
+  const { data, error } = await sb.from('tello_staff_chat_messages').select('*')
+    .eq('user_id', state.user.id).order('created_at', { ascending: true }).limit(200);
+  if (error) console.error(error);
+  state.chatMessages = data || [];
+}
+
+// Builds a plain-text snapshot of the current week's Schedule Board plus open
+// reminders and upcoming birthdays, sent as context so Tello's answers are
+// grounded in real assignments instead of guessing.
+async function buildScheduleContext() {
+  const now = new Date();
+  const ws = startOfWeek(now);
+  const assignments = await loadWeek(toISODate(ws));
+  const days = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(ws, i) }));
+
+  const lines = [];
+  lines.push(`Today is ${fmtLong(now)}.`);
+  lines.push(`This week runs ${fmtShort(ws)} to ${fmtShort(addDays(ws, 6))}.`);
+  lines.push('');
+  lines.push("HOMES THIS WEEK (— means unfilled):");
+  state.config.homes.forEach((home) => {
+    const hd = assignments.homes[home.id] || {};
+    lines.push(`${home.name}:`);
+    days.forEach((d) => {
+      const day = hd[d.key] || {};
+      lines.push(`  ${d.label} ${fmtShort(d.date)} — CG1: ${day.cg1 || '—'} | CG2: ${day.cg2 || '—'} | Night: ${day.night || '—'}`);
+    });
+  });
+  lines.push('');
+  lines.push('RELIEVER POOL THIS WEEK:');
+  state.config.relievers.forEach((r) => {
+    const rd = assignments.relievers[r.id] || {};
+    const deployed = days.map((d) => (rd[d.key] ? `${d.label}: ${rd[d.key]}` : null)).filter(Boolean);
+    lines.push(`  ${r.name} — ${deployed.length ? deployed.join(', ') : 'no deployments logged this week'}`);
+  });
+  lines.push('');
+  const openReminders = state.reminders.filter((r) => !r.done);
+  lines.push(`OPEN REMINDERS: ${openReminders.length ? openReminders.map((r) => `${r.title}${r.due_time ? ` (${r.due_time})` : ''}`).join('; ') : 'none'}`);
+  const upcomingBdays = state.birthdays
+    .map((b) => ({ b, diff: nextBirthdayDiff(b.bday_month, b.bday_day, now) }))
+    .filter((x) => x.diff <= 14)
+    .sort((a, b) => a.diff - b.diff);
+  lines.push(`BIRTHDAYS IN THE NEXT 2 WEEKS: ${upcomingBdays.length ? upcomingBdays.map((x) => `${x.b.name} (${x.diff === 0 ? 'today' : `in ${x.diff}d`})`).join('; ') : 'none'}`);
+
+  return lines.join('\n');
+}
+
+async function sendChatMessage(text) {
+  state.chatMessages.push({ role: 'user', content: text });
+  state.chatSending = true;
+  renderChat();
+
+  const { error: insertErr } = await sb.from('tello_staff_chat_messages')
+    .insert({ user_id: state.user.id, role: 'user', content: text });
+  if (insertErr) console.error(insertErr);
+
+  try {
+    const context = await buildScheduleContext();
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: state.chatMessages.map((m) => ({ role: m.role, content: m.content })),
+        context,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    state.chatMessages.push({ role: 'assistant', content: data.reply });
+    const { error: insertErr2 } = await sb.from('tello_staff_chat_messages')
+      .insert({ user_id: state.user.id, role: 'assistant', content: data.reply });
+    if (insertErr2) console.error(insertErr2);
+  } catch (err) {
+    state.chatMessages.push({ role: 'assistant', content: `Could not reach Tello: ${err.message}`, isError: true });
+  } finally {
+    state.chatSending = false;
+    renderChat();
+  }
+}
+
+async function clearChatHistory() {
+  if (!state.chatMessages.length) return;
+  if (!window.confirm('Clear the whole conversation? This cannot be undone.')) return;
+  const { error } = await sb.from('tello_staff_chat_messages').delete().eq('user_id', state.user.id);
+  if (error) console.error(error);
+  state.chatMessages = [];
+  renderChat();
+}
+
+// ---------------------------------------------------------------------------
 // Render — app shell
 // ---------------------------------------------------------------------------
 const ADMIN_ONLY_TABS = ['staff', 'chat'];
@@ -1025,6 +1164,9 @@ function renderApp() {
   document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
   const view = document.getElementById('view-' + state.tab);
   if (view) view.classList.add('active');
+  if (state.tab === 'schedule') renderSchedule();
+  if (state.tab === 'today') renderToday();
+  if (state.tab === 'chat') renderChat();
   renderCurrentTab();
 }
 
@@ -1612,6 +1754,33 @@ function renderBirthdays(now) {
 }
 
 // ---------------------------------------------------------------------------
+// Render — Chat (Ask Tello)
+// ---------------------------------------------------------------------------
+function renderChat() {
+  const list = state.chatMessages.map((m) => `
+    <div class="chat-bubble ${m.role}${m.isError ? ' error' : ''}">${esc(m.content)}</div>
+  `).join('') || `<div class="chat-empty">Ask Tello about today's coverage, who can cover a shift, or what's coming up this week.</div>`;
+
+  const pending = state.chatSending ? `<div class="chat-bubble assistant pending">Tello is thinking…</div>` : '';
+
+  document.getElementById('view-chat').innerHTML = `
+    <div class="card chat-card">
+      <div class="card-header-row">
+        <h3>Ask Tello</h3>
+        <button class="btn-outline small" data-action="clear-chat">Clear</button>
+      </div>
+      <div id="chatMessages" class="chat-messages">${list}${pending}</div>
+      <form data-form="chat" class="chat-input-bar">
+        <input type="text" name="message" placeholder="Ask about coverage, gaps, who's free…" autocomplete="off" required ${state.chatSending ? 'disabled' : ''} />
+        <button type="submit" class="btn-primary" ${state.chatSending ? 'disabled' : ''}>Send</button>
+      </form>
+    </div>
+  `;
+  const box = document.getElementById('chatMessages');
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
+// ---------------------------------------------------------------------------
 // Event delegation
 // ---------------------------------------------------------------------------
 function onGlobalClick(e) {
@@ -1711,6 +1880,9 @@ function onGlobalClick(e) {
     case 'forgot-password':
       handleForgotPassword(document.getElementById('authEmail').value.trim());
       break;
+    case 'clear-chat':
+      clearChatHistory();
+      break;
   }
 }
 
@@ -1746,6 +1918,13 @@ function onGlobalSubmit(e) {
     if (!date) return;
     submitDayOffRequest(date, fd.get('reason').trim());
     form.reset();
+  } else if (form.dataset.form === 'chat') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const text = fd.get('message').trim();
+    if (!text || state.chatSending) return;
+    form.reset();
+    sendChatMessage(text);
   } else if (form.dataset.form === 'gap-assign') {
     e.preventDefault();
     const fd = new FormData(form);
