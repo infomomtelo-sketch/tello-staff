@@ -133,6 +133,18 @@
   }
   input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   input::placeholder { color: #6f9284; }
+  textarea.staff-notes {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    width: 100%;
+  }
+  textarea.staff-notes:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  textarea.staff-notes::placeholder { color: #6f9284; }
 
   .btn-primary {
     background: var(--accent);
@@ -404,6 +416,31 @@
   .birthday-tag { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
   .birthday-item.today .birthday-tag { color: var(--accent); font-weight: 700; }
 
+  /* ---------- Staff view ---------- */
+  select.staff-field {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    width: 100%;
+  }
+  select.staff-field:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .staff-item {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .staff-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .staff-row > * { flex: 1; min-width: 130px; }
+  .staff-notes { min-height: 44px; resize: vertical; }
+  .staff-item-footer { display: flex; justify-content: flex-end; }
+
   /* ---------- Chat view ---------- */
   .card-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .card-header-row h3 { margin: 0; }
@@ -504,13 +541,7 @@
 
     <div id="view-today" class="view"></div>
 
-    <div id="view-staff" class="view placeholder-view">
-      <div class="placeholder">
-        <div class="placeholder-icon">👥</div>
-        <h2>Staff</h2>
-        <p>Staff directory and management is coming in the next session.</p>
-      </div>
-    </div>
+    <div id="view-staff" class="view"></div>
 
     <div id="view-chat" class="view"></div>
   </main>
@@ -562,6 +593,7 @@ const state = {
   birthdays: [],
   chatMessages: [],
   chatSending: false,
+  staff: [],
 };
 
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -708,6 +740,7 @@ async function enterApp(user) {
     await loadReminders();
     await loadBirthdays();
     await loadChatMessages();
+    await loadStaff();
   }
   renderApp();
 }
@@ -962,6 +995,39 @@ async function clearChatHistory() {
 }
 
 // ---------------------------------------------------------------------------
+// Data — staff directory
+// ---------------------------------------------------------------------------
+async function loadStaff() {
+  const { data, error } = await sb.from('tello_staff_members').select('*')
+    .eq('user_id', state.user.id).order('name');
+  if (error) console.error(error);
+  state.staff = data || [];
+}
+
+async function addStaffMember(name, role, contact, homeId) {
+  const { error } = await sb.from('tello_staff_members')
+    .insert({ user_id: state.user.id, name, role: role || null, contact: contact || null, home_id: homeId || null });
+  if (error) console.error(error);
+  await loadStaff();
+  renderStaff();
+}
+
+async function updateStaffField(id, field, value) {
+  const { error } = await sb.from('tello_staff_members')
+    .update({ [field]: value || null, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) console.error(error);
+}
+
+async function deleteStaffMember(id) {
+  if (!window.confirm('Remove this staff member? This cannot be undone.')) return;
+  const { error } = await sb.from('tello_staff_members').delete().eq('id', id);
+  if (error) console.error(error);
+  await loadStaff();
+  renderStaff();
+}
+
+// ---------------------------------------------------------------------------
 // Render — app shell
 // ---------------------------------------------------------------------------
 function renderApp() {
@@ -972,6 +1038,7 @@ function renderApp() {
   if (state.tab === 'schedule') renderSchedule();
   if (state.tab === 'today') renderToday();
   if (state.tab === 'chat') renderChat();
+  if (state.tab === 'staff') renderStaff();
 }
 
 // ---------------------------------------------------------------------------
@@ -1279,6 +1346,50 @@ function renderChat() {
 }
 
 // ---------------------------------------------------------------------------
+// Render — Staff directory
+// ---------------------------------------------------------------------------
+function homeOptionsHtml(selectedHomeId) {
+  return `<option value="">Unassigned</option>` + state.config.homes.map((h) => `
+    <option value="${h.id}" ${h.id === selectedHomeId ? 'selected' : ''}>${esc(h.name)}</option>
+  `).join('');
+}
+
+function renderStaff() {
+  const list = state.staff.length
+    ? state.staff.map((m) => `
+        <div class="staff-item">
+          <div class="staff-row">
+            <input type="text" class="staff-field" data-kind="staff-field" data-id="${m.id}" data-field="name" value="${esc(m.name)}" placeholder="Name" />
+            <input type="text" class="staff-field" data-kind="staff-field" data-id="${m.id}" data-field="role" value="${esc(m.role || '')}" placeholder="Role" />
+          </div>
+          <div class="staff-row">
+            <input type="text" class="staff-field" data-kind="staff-field" data-id="${m.id}" data-field="contact" value="${esc(m.contact || '')}" placeholder="Phone / contact" />
+            <select class="staff-field" data-kind="staff-home" data-id="${m.id}">${homeOptionsHtml(m.home_id)}</select>
+          </div>
+          <textarea class="staff-notes" data-kind="staff-field" data-id="${m.id}" data-field="notes" placeholder="Notes (optional)">${esc(m.notes || '')}</textarea>
+          <div class="staff-item-footer">
+            <button class="btn-remove" data-action="staff-delete" data-id="${m.id}">✕ Remove</button>
+          </div>
+        </div>`).join('')
+    : `<div class="muted">No staff added yet.</div>`;
+
+  document.getElementById('view-staff').innerHTML = `
+    <section class="card">
+      <h3>Add Staff Member</h3>
+      <form data-form="staff" class="inline-form">
+        <input type="text" name="name" placeholder="Staff name" required />
+        <input type="text" name="role" placeholder="Role (optional)" />
+        <input type="text" name="contact" placeholder="Phone (optional)" />
+        <select class="staff-field" name="home_id">${homeOptionsHtml('')}</select>
+        <button type="submit" class="btn-primary">+ Add</button>
+      </form>
+    </section>
+    <h3 class="section-title">Staff (${state.staff.length})</h3>
+    <div class="list">${list}</div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
 // Event delegation
 // ---------------------------------------------------------------------------
 function onGlobalClick(e) {
@@ -1356,6 +1467,9 @@ function onGlobalClick(e) {
     case 'clear-chat':
       clearChatHistory();
       break;
+    case 'staff-delete':
+      deleteStaffMember(btn.dataset.id);
+      break;
   }
 }
 
@@ -1384,6 +1498,13 @@ function onGlobalSubmit(e) {
     if (!text || state.chatSending) return;
     form.reset();
     sendChatMessage(text);
+  } else if (form.dataset.form === 'staff') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const name = fd.get('name').trim();
+    if (!name) return;
+    addStaffMember(name, fd.get('role').trim(), fd.get('contact').trim(), fd.get('home_id'));
+    form.reset();
   } else if (form.id === 'authForm') {
     e.preventDefault();
     handleAuthSubmit(form);
@@ -1410,6 +1531,10 @@ function onGlobalChange(e) {
   } else if (t.dataset.kind === 'select-home') {
     state.selectedHomeId = t.value;
     renderSchedule();
+  } else if (t.dataset.kind === 'staff-field') {
+    updateStaffField(t.dataset.id, t.dataset.field, t.value.trim());
+  } else if (t.dataset.kind === 'staff-home') {
+    updateStaffField(t.dataset.id, 'home_id', t.value);
   }
 }
 

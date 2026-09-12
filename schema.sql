@@ -60,11 +60,26 @@ create table if not exists tello_staff_chat_messages (
   created_at timestamptz not null default now()
 );
 
+-- home_id is a soft reference to a home id in tello_staff_config's homes
+-- JSONB, not an FK — same pattern as tello_staff_schedule_days.
+create table if not exists tello_staff_members (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  role text,
+  contact text,
+  home_id text,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table tello_staff_config enable row level security;
 alter table tello_staff_schedule_days enable row level security;
 alter table tello_staff_reminders enable row level security;
 alter table tello_staff_birthdays enable row level security;
 alter table tello_staff_chat_messages enable row level security;
+alter table tello_staff_members enable row level security;
 
 drop policy if exists "own config" on tello_staff_config;
 create policy "own config" on tello_staff_config
@@ -84,6 +99,10 @@ create policy "own birthdays" on tello_staff_birthdays
 
 drop policy if exists "own chat messages" on tello_staff_chat_messages;
 create policy "own chat messages" on tello_staff_chat_messages
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "own staff members" on tello_staff_members;
+create policy "own staff members" on tello_staff_members
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 select

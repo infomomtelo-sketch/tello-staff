@@ -24,7 +24,9 @@ chat endpoint — no client-side build step, matching the other RunP8 apps.
   grounded in the current week's Schedule Board data, open reminders, and
   upcoming birthdays (built fresh client-side and sent as context on each
   message). Conversation history persists in Supabase.
-- **Staff** — still a placeholder, lands in a future session.
+- **Staff** — a directory: add/edit/remove staff members (name, role, phone,
+  assigned home, notes), all inline-editable. No logins or role-based access
+  yet — same single-admin model as the rest of the app.
 - Bottom nav: **Schedule**, **Today**, **Staff**, **Chat**.
 - Auth: Supabase email/password sign in, sign up, and password reset.
 
@@ -32,10 +34,11 @@ chat endpoint — no client-side build step, matching the other RunP8 apps.
 
 ### 1. Database (Supabase project `nwlhsshvqmbhemhxcran`)
 
-Paste `schema.sql` into the Supabase SQL editor and run it. It creates five
+Paste `schema.sql` into the Supabase SQL editor and run it. It creates six
 tables (`tello_staff_config`, `tello_staff_schedule_days`,
-`tello_staff_reminders`, `tello_staff_birthdays`, `tello_staff_chat_messages`),
-each with RLS scoped to `auth.uid()`, and is safe to re-run. If you ran an
+`tello_staff_reminders`, `tello_staff_birthdays`, `tello_staff_chat_messages`,
+`tello_staff_members`), each with RLS scoped to `auth.uid()`, and is safe to
+re-run. If you ran an
 earlier version of this schema, `tello_staff_schedule_days` (day-by-day) is
 new and replaces the old `tello_staff_schedule` (one JSONB blob per week) —
 the script leaves the old table alone since it doesn't know whether it holds
@@ -96,5 +99,6 @@ needed for day-to-day coverage questions.
 - Month view only exists for the selected home's calendar; the reliever pool
   stays week-only since it's a short-horizon floating resource, not something
   browsed by month.
-- Chat has no Staff directory to draw on yet (that's a future session), so it
-  only knows names as they appear typed into the Schedule Board.
+- Chat doesn't read the Staff directory yet — its context is still built only
+  from the Schedule Board, reminders, and birthdays, so it only knows names
+  as they appear typed into the Schedule Board.

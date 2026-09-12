@@ -59,7 +59,7 @@ export async function onRequestPost({ request, env }) {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 1024,
+        max_tokens: 4096,
         output_config: { effort: 'medium' },
         system: `${TELLO_IDENTITY}\n\nCurrent schedule data:\n${context}`,
         messages: turns,
@@ -77,9 +77,11 @@ export async function onRequestPost({ request, env }) {
     return json({ error: data?.error?.message || `Claude API error (${anthropicRes.status})` }, anthropicRes.status);
   }
 
-  const reply = data.content && data.content[0] && data.content[0].text
-    ? data.content[0].text
-    : 'Unable to reply.';
+  // Adaptive thinking (on by default for this model) puts a "thinking" block
+  // before the text block, so the reply is never reliably content[0] — find
+  // the actual text block instead of assuming position.
+  const textBlock = Array.isArray(data.content) ? data.content.find((b) => b.type === 'text') : null;
+  const reply = textBlock && textBlock.text ? textBlock.text : 'Unable to reply.';
 
   return json({ reply });
 }
