@@ -67,13 +67,19 @@ needed for day-to-day coverage questions.
 
 ### 4. Cloudflare Pages
 
+- Project: `carehome-application-form`, deployed at
+  `https://carehome-application-form.pages.dev`.
+- Production branch must be set to `claude/tello-staff-index-hn4amu` —
+  `main` currently carries a different, unrelated in-progress rewrite of
+  this app from another session.
 - Connect this repo, no build command, output directory = repo root.
   Cloudflare Pages auto-detects `functions/api/chat.js` and deploys it
   alongside the static site — no separate Worker to set up.
-- Once you know the real production URL, update `REDIRECT_URL` in
-  `index.html` to match exactly (currently hardcoded to the placeholder
-  `https://tello-staff.pages.dev`) and add that same URL to Supabase →
-  Authentication → URL Configuration → Redirect URLs.
+- `REDIRECT_URL` in `index.html` is hardcoded to
+  `https://carehome-application-form.pages.dev` to match. If the Pages
+  project is ever recreated under a different URL, update it there and add
+  the new URL to Supabase → Authentication → URL Configuration → Redirect
+  URLs (the old one can be removed from that list once nothing points at it).
 
 ## Notes
 
