@@ -122,7 +122,7 @@
   }
 
   /* ---------- Inputs / buttons ---------- */
-  input[type="text"], input[type="email"], input[type="password"], input[type="time"], input[type="date"] {
+  input[type="text"], input[type="email"], input[type="password"], input[type="time"], input[type="date"], select {
     background: var(--bg-input);
     border: 1px solid var(--border);
     color: var(--text);
@@ -131,7 +131,7 @@
     font-size: 14px;
     width: 100%;
   }
-  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   input::placeholder { color: #6f9284; }
 
   .btn-primary {
@@ -230,6 +230,19 @@
   }
   .nav-btn .nav-icon { font-size: 20px; }
   .nav-btn.active { color: var(--accent); background: rgba(232, 193, 92, 0.1); }
+  .nav-btn.nav-hidden { display: none; }
+
+  .role-badge {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--accent);
+    background: rgba(232, 193, 92, 0.15);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: 3px 10px;
+  }
 
   .placeholder-view { align-items: center; justify-content: center; min-height: 50vh; }
   .placeholder { text-align: center; color: var(--text-muted); max-width: 320px; }
@@ -295,14 +308,41 @@
     font-size: 12px;
   }
   .schedule-grid td.slot-label.is-night { color: var(--accent); }
-  .schedule-grid td { background: var(--bg-page); min-width: 96px; }
+  .schedule-grid td { background: var(--bg-page); min-width: 96px; position: relative; }
   .cell-input {
+    display: block;
     border: none !important;
     background: transparent !important;
     padding: 4px !important;
     width: 100%;
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
   }
   .cell-input:focus { outline: 1px solid var(--accent); border-radius: 4px; }
+  .cell-input.cell-location { font-size: 11px; color: var(--text-muted); border-top: 1px dashed var(--border) !important; }
+  /* Gap detection: filled = green, empty = red, approved day off = gray */
+  td.cell-filled { background: rgba(107, 211, 154, 0.10) !important; }
+  td.cell-empty { background: rgba(229, 114, 107, 0.14) !important; }
+  td.cell-dayoff { background: rgba(150, 150, 150, 0.28) !important; }
+  .dayoff-badge { position: absolute; top: 2px; right: 4px; font-size: 11px; pointer-events: none; }
+
+  .reliever-toggle { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 28px; }
+  .view-toggle { display: flex; background: var(--bg-input); border-radius: 8px; padding: 4px; width: auto; }
+  .view-toggle button { flex: 0 0 auto; background: transparent; border: none; color: var(--text-muted); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; }
+  .view-toggle button.active { background: var(--accent); color: var(--accent-contrast); }
+
+  table.month-grid { table-layout: fixed; min-width: 720px; }
+  .month-grid th { background: var(--bg-elevated); text-align: center; font-size: 12px; padding: 6px; }
+  td.month-cell { vertical-align: top; padding: 6px; min-width: 96px; height: 92px; background: var(--bg-page); }
+  td.month-cell.outside { opacity: 0.35; }
+  td.month-cell.empty { background: rgba(229, 114, 107, 0.14) !important; }
+  .month-daynum { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+  .month-entry { font-size: 11px; margin-bottom: 2px; padding: 1px 4px; border-radius: 4px; word-break: break-word; }
+  .month-entry.filled { background: rgba(107, 211, 154, 0.18); }
+  .month-entry.dayoff { background: rgba(150, 150, 150, 0.3); color: var(--text-muted); }
+  .month-entry.no-relievers { color: var(--danger); font-weight: 600; }
+  .month-loc { color: var(--text-muted); }
 
   /* ---------- Today view ---------- */
   .today-date { font-size: 20px; font-weight: 800; margin-bottom: 16px; }
@@ -404,7 +444,7 @@
       background: #fff !important;
       border-color: #bbb !important;
     }
-    .schedule-grid input { border: none !important; background: transparent !important; }
+    .schedule-grid input, .schedule-grid select { border: none !important; background: transparent !important; appearance: none; -webkit-appearance: none; }
     .section-title, .week-label { color: #000 !important; }
     .app-main { padding-bottom: 0; }
   }
@@ -437,7 +477,10 @@
 <div id="app" class="app" style="display:none">
   <header class="app-header no-print">
     <div class="app-title">Tello <span>Staff</span></div>
-    <button class="btn-outline small" data-action="sign-out">Sign Out</button>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <span id="roleBadge" class="role-badge" style="display:none">Caregiver</span>
+      <button class="btn-outline small" data-action="sign-out">Sign Out</button>
+    </div>
   </header>
 
   <main class="app-main">
@@ -445,15 +488,11 @@
 
     <div id="view-today" class="view"></div>
 
-    <div id="view-staff" class="view placeholder-view">
-      <div class="placeholder">
-        <div class="placeholder-icon">👥</div>
-        <h2>Staff</h2>
-        <p>Staff directory and management is coming in the next session.</p>
-      </div>
-    </div>
+    <div id="view-staff" class="view"></div>
 
     <div id="view-chat" class="view"></div>
+
+    <div id="view-dayoff" class="view"></div>
   </main>
 
   <nav class="bottom-nav no-print">
@@ -463,11 +502,14 @@
     <button class="nav-btn" data-action="nav-tab" data-tab="today">
       <span class="nav-icon">☀️</span><span>Today</span>
     </button>
-    <button class="nav-btn" data-action="nav-tab" data-tab="staff">
+    <button class="nav-btn" data-action="nav-tab" data-tab="staff" data-role="admin">
       <span class="nav-icon">👥</span><span>Staff</span>
     </button>
-    <button class="nav-btn" data-action="nav-tab" data-tab="chat">
-      <span class="nav-icon">💬</span><span>Chat</span>
+    <button class="nav-btn" data-action="nav-tab" data-tab="chat" data-role="admin">
+      <span class="nav-icon">🧩</span><span>Tello</span>
+    </button>
+    <button class="nav-btn" data-action="nav-tab" data-tab="dayoff" data-role="caregiver">
+      <span class="nav-icon">📋</span><span>Day Off</span>
     </button>
   </nav>
 </div>
@@ -486,22 +528,39 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
 });
 
+// Separate client, session not persisted — used only to sign up a new
+// caregiver/admin login from the Staff tab without swapping out the
+// currently signed-in admin's session on the main `sb` client.
+const sbProvision = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 const state = {
   user: null,
+  role: 'admin',
+  orgId: null,
+  staffMemberId: null,
   tab: 'schedule',
   authMode: 'signin',
   config: { homes: [], relievers: [] },
   weekOffset: 0,
+  relieverViewMode: 'week',
+  monthOffset: 0,
   manageOpen: false,
   scheduleCache: {},
   reminders: [],
   birthdays: [],
   chatMessages: [],
   chatSending: false,
+  staff: [],
+  staffLoginFormId: null,
+  dayOffRequests: [],
 };
+
+function isAdmin() { return state.role === 'admin'; }
 
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -557,6 +616,14 @@ function defaultConfig() {
 
 function emptyAssignments() {
   return { homes: {}, relievers: {} };
+}
+
+// A reliever/day cell is { name, location }. Older data stored a plain
+// name string — normalize that transparently so nothing needs migrating.
+function relieverCellData(raw) {
+  if (!raw) return { name: '', location: '' };
+  if (typeof raw === 'string') return { name: raw, location: '' };
+  return { name: raw.name || '', location: raw.location || '' };
 }
 
 // ---------------------------------------------------------------------------
@@ -616,6 +683,13 @@ function renderAuth() {
 
 function showAuthScreen() {
   state.user = null;
+  state.role = 'admin';
+  state.orgId = null;
+  state.staffMemberId = null;
+  state.scheduleCache = {};
+  state.staff = [];
+  state.staffLoginFormId = null;
+  state.dayOffRequests = [];
   appEntered = false;
   document.getElementById('authScreen').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
@@ -628,7 +702,10 @@ async function enterApp(user) {
   document.getElementById('app').style.display = '';
   if (!appEntered) {
     appEntered = true;
-    await loadConfig(user.id);
+    await loadRole(user);
+    await loadConfig();
+    await loadStaff();
+    await loadDayOffRequests();
     await loadReminders();
     await loadBirthdays();
     await loadChatMessages();
@@ -637,10 +714,28 @@ async function enterApp(user) {
 }
 
 // ---------------------------------------------------------------------------
+// Data — role / org
+// ---------------------------------------------------------------------------
+async function loadRole(user) {
+  let { data, error } = await sb.from('tello_staff_roles').select('*').eq('user_id', user.id).maybeSingle();
+  if (error) console.error(error);
+  if (!data) {
+    const inserted = await sb.from('tello_staff_roles')
+      .insert({ user_id: user.id, owner_id: user.id, role: 'admin' })
+      .select().single();
+    if (inserted.error) console.error(inserted.error);
+    data = inserted.data;
+  }
+  state.role = (data && data.role) || 'admin';
+  state.orgId = (data && data.owner_id) || user.id;
+  state.staffMemberId = (data && data.staff_member_id) || null;
+}
+
+// ---------------------------------------------------------------------------
 // Data — config (homes / reliever pool)
 // ---------------------------------------------------------------------------
-async function loadConfig(userId) {
-  const { data, error } = await sb.from('tello_staff_config').select('*').eq('user_id', userId).maybeSingle();
+async function loadConfig() {
+  const { data, error } = await sb.from('tello_staff_config').select('*').eq('user_id', state.orgId).maybeSingle();
   if (error) { console.error(error); }
   if (data) {
     state.config = {
@@ -654,8 +749,9 @@ async function loadConfig(userId) {
 }
 
 async function saveConfig() {
+  if (!isAdmin()) return;
   const { error } = await sb.from('tello_staff_config').upsert({
-    user_id: state.user.id,
+    user_id: state.orgId,
     homes: state.config.homes,
     relievers: state.config.relievers,
     updated_at: new Date().toISOString(),
@@ -669,23 +765,50 @@ async function saveConfig() {
 async function loadWeek(weekStartStr) {
   if (state.scheduleCache[weekStartStr]) return state.scheduleCache[weekStartStr];
   const { data, error } = await sb.from('tello_staff_schedule').select('*')
-    .eq('user_id', state.user.id).eq('week_start', weekStartStr).maybeSingle();
+    .eq('user_id', state.orgId).eq('week_start', weekStartStr).maybeSingle();
   if (error) console.error(error);
   const assignments = (data && data.assignments) || emptyAssignments();
   state.scheduleCache[weekStartStr] = assignments;
   return assignments;
 }
 
+function setCellValue(dataset, value) {
+  const ws = weekStartForOffset(state.weekOffset);
+  const wsStr = toISODate(ws);
+  const assignments = state.scheduleCache[wsStr] || (state.scheduleCache[wsStr] = emptyAssignments());
+  if (dataset.kind === 'home') {
+    const { home, day, slot } = dataset;
+    assignments.homes[home] = assignments.homes[home] || {};
+    assignments.homes[home][day] = assignments.homes[home][day] || {};
+    assignments.homes[home][day][slot] = value;
+  } else if (dataset.kind === 'reliever') {
+    const { reliever, day } = dataset;
+    assignments.relievers[reliever] = assignments.relievers[reliever] || {};
+    const cell = relieverCellData(assignments.relievers[reliever][day]);
+    cell.name = value;
+    assignments.relievers[reliever][day] = cell;
+  } else if (dataset.kind === 'reliever-location') {
+    const { reliever, day } = dataset;
+    assignments.relievers[reliever] = assignments.relievers[reliever] || {};
+    const cell = relieverCellData(assignments.relievers[reliever][day]);
+    cell.location = value;
+    assignments.relievers[reliever][day] = cell;
+  }
+  queueSaveWeek(wsStr);
+}
+
 let saveScheduleTimer = null;
 function queueSaveWeek(weekStartStr) {
+  if (!isAdmin()) return;
   clearTimeout(saveScheduleTimer);
   saveScheduleTimer = setTimeout(() => saveWeek(weekStartStr), 500);
 }
 
 async function saveWeek(weekStartStr) {
+  if (!isAdmin()) return;
   const assignments = state.scheduleCache[weekStartStr] || emptyAssignments();
   const { error } = await sb.from('tello_staff_schedule').upsert({
-    user_id: state.user.id,
+    user_id: state.orgId,
     week_start: weekStartStr,
     assignments,
     updated_at: new Date().toISOString(),
@@ -698,20 +821,22 @@ async function saveWeek(weekStartStr) {
 // ---------------------------------------------------------------------------
 async function loadReminders() {
   const { data, error } = await sb.from('tello_staff_reminders').select('*')
-    .eq('user_id', state.user.id).order('due_time', { ascending: true, nullsFirst: false });
+    .eq('user_id', state.orgId).order('due_time', { ascending: true, nullsFirst: false });
   if (error) console.error(error);
   state.reminders = data || [];
 }
 
 async function addReminder(title, note, dueTime) {
+  if (!isAdmin()) return;
   const { error } = await sb.from('tello_staff_reminders')
-    .insert({ user_id: state.user.id, title, note: note || null, due_time: dueTime || null });
+    .insert({ user_id: state.orgId, title, note: note || null, due_time: dueTime || null });
   if (error) console.error(error);
   await loadReminders();
   renderToday();
 }
 
 async function toggleReminder(id, done) {
+  if (!isAdmin()) return;
   const { error } = await sb.from('tello_staff_reminders').update({ done }).eq('id', id);
   if (error) console.error(error);
   await loadReminders();
@@ -719,6 +844,7 @@ async function toggleReminder(id, done) {
 }
 
 async function deleteReminder(id) {
+  if (!isAdmin()) return;
   const { error } = await sb.from('tello_staff_reminders').delete().eq('id', id);
   if (error) console.error(error);
   await loadReminders();
@@ -726,29 +852,197 @@ async function deleteReminder(id) {
 }
 
 // ---------------------------------------------------------------------------
-// Data — birthdays
+// Data — staff directory
 // ---------------------------------------------------------------------------
-async function loadBirthdays() {
-  const { data, error } = await sb.from('tello_staff_birthdays').select('*')
-    .eq('user_id', state.user.id).order('name');
+async function loadStaff() {
+  const { data, error } = await sb.from('tello_staff_members').select('*')
+    .eq('owner_id', state.orgId).order('name');
   if (error) console.error(error);
-  state.birthdays = data || [];
+  state.staff = data || [];
 }
 
-async function addBirthday(name, month, day) {
-  const { error } = await sb.from('tello_staff_birthdays')
-    .insert({ user_id: state.user.id, name, bday_month: month, bday_day: day });
-  if (error) console.error(error);
-  await loadBirthdays();
-  renderToday();
+async function addStaffMember(name, role, homeId, bdayMonth, bdayDay, contact) {
+  if (!isAdmin()) return;
+  const { error } = await sb.from('tello_staff_members').insert({
+    owner_id: state.orgId, name, role: role || 'caregiver', home_id: homeId || null,
+    bday_month: bdayMonth || null, bday_day: bdayDay || null, contact: contact || null,
+  });
+  if (error) { console.error(error); alert('Could not add staff member: ' + error.message); return; }
+  await loadStaff();
+  renderStaff();
 }
 
-async function deleteBirthday(id) {
-  const { error } = await sb.from('tello_staff_birthdays').delete().eq('id', id);
-  if (error) console.error(error);
-  await loadBirthdays();
-  renderToday();
+async function updateStaffMember(id, patch) {
+  if (!isAdmin()) return;
+  const { error } = await sb.from('tello_staff_members').update(patch).eq('id', id);
+  if (error) { console.error(error); return; }
+  const s = state.staff.find((x) => x.id === id);
+  if (s) Object.assign(s, patch);
+  if (patch.role && s && s.auth_user_id) {
+    const { error: roleErr } = await sb.from('tello_staff_roles').update({ role: patch.role }).eq('user_id', s.auth_user_id);
+    if (roleErr) console.error(roleErr);
+  }
 }
+
+async function deleteStaffMember(id) {
+  if (!isAdmin()) return;
+  if (!confirm('Remove this staff member from the directory? Their login (if any) is kept but unlinked.')) return;
+  const { error } = await sb.from('tello_staff_members').delete().eq('id', id);
+  if (error) { console.error(error); return; }
+  await loadStaff();
+  renderStaff();
+}
+
+async function createStaffLogin(staffId, email, password) {
+  if (!isAdmin()) return;
+  const { data, error } = await sbProvision.auth.signUp({ email, password });
+  if (error) { alert('Could not create login: ' + error.message); return; }
+  const newUserId = data && data.user && data.user.id;
+  if (!newUserId) {
+    alert('Account creation did not return a user id — check the Supabase project\'s email confirmation settings.');
+    return;
+  }
+  const staffMember = state.staff.find((s) => s.id === staffId);
+  const role = (staffMember && staffMember.role) || 'caregiver';
+  const { error: roleErr } = await sb.from('tello_staff_roles')
+    .insert({ user_id: newUserId, owner_id: state.orgId, role, staff_member_id: staffId });
+  if (roleErr) { console.error(roleErr); alert('Login created, but linking the role failed: ' + roleErr.message); }
+  const { error: memberErr } = await sb.from('tello_staff_members')
+    .update({ auth_user_id: newUserId, email }).eq('id', staffId);
+  if (memberErr) console.error(memberErr);
+  state.staffLoginFormId = null;
+  await loadStaff();
+  renderStaff();
+  alert(`Login created for ${email}.\n\nTemporary password: ${password}\n\nShare this with them directly — they can change it later via "Forgot password?" on the sign-in screen.`);
+}
+
+// ---------------------------------------------------------------------------
+// Data — day off requests
+// ---------------------------------------------------------------------------
+async function loadDayOffRequests() {
+  const { data, error } = await sb.from('tello_staff_dayoff_requests').select('*')
+    .eq('owner_id', state.orgId).order('date', { ascending: true });
+  if (error) console.error(error);
+  state.dayOffRequests = data || [];
+}
+
+async function submitDayOffRequest(date, reason) {
+  if (!state.staffMemberId) {
+    alert('Your staff profile isn\'t linked to a login yet — ask your admin to finish setting it up in the Staff tab.');
+    return;
+  }
+  const { error } = await sb.from('tello_staff_dayoff_requests').insert({
+    owner_id: state.orgId, staff_member_id: state.staffMemberId, requested_by: state.user.id,
+    date, reason: reason || null,
+  });
+  if (error) { console.error(error); alert('Could not submit request: ' + error.message); return; }
+  await loadDayOffRequests();
+  renderDayOff();
+}
+
+async function cancelDayOffRequest(id) {
+  const { error } = await sb.from('tello_staff_dayoff_requests').delete().eq('id', id);
+  if (error) { console.error(error); return; }
+  await loadDayOffRequests();
+  renderDayOff();
+}
+
+async function decideDayOffRequest(id, status) {
+  if (!isAdmin()) return;
+  const { error } = await sb.from('tello_staff_dayoff_requests')
+    .update({ status, decided_by: state.user.id, decided_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) { console.error(error); return; }
+  await loadDayOffRequests();
+  renderStaff();
+  if (state.tab === 'schedule') renderSchedule();
+}
+
+function approvedDayOffSet() {
+  const set = new Set();
+  state.dayOffRequests.forEach((r) => {
+    if (r.status !== 'approved') return;
+    const staff = state.staff.find((s) => s.id === r.staff_member_id);
+    if (staff) set.add(`${r.date}|${staff.name}`);
+  });
+  return set;
+}
+
+// ---------------------------------------------------------------------------
+// Data — Gap Resolver (rule-based "Tello" suggestions)
+// ---------------------------------------------------------------------------
+function findScheduleGaps(assignments, days) {
+  const gaps = [];
+  state.config.homes.forEach((home) => {
+    const homeData = assignments.homes[home.id] || {};
+    [['cg1', 'Caregiver 1'], ['cg2', 'Caregiver 2'], ['night', 'Night Shift']].forEach(([slotKey, slotLabel]) => {
+      days.forEach((d) => {
+        const val = (homeData[d.key] || {})[slotKey] || '';
+        if (!val) {
+          gaps.push({
+            kind: 'home', home: home.id, slot: slotKey, day: d.key, dayLabel: d.label, date: d.date,
+            label: `${home.name} — ${slotLabel}`,
+          });
+        }
+      });
+    });
+  });
+  state.config.relievers.forEach((r) => {
+    const relData = assignments.relievers[r.id] || {};
+    days.forEach((d) => {
+      const cell = relieverCellData(relData[d.key]);
+      if (!cell.name) {
+        gaps.push({
+          kind: 'reliever', reliever: r.id, day: d.key, dayLabel: d.label, date: d.date,
+          label: `Reliever — ${r.name}`,
+        });
+      }
+    });
+  });
+  return gaps.sort((a, b) => a.date - b.date);
+}
+
+function namesAssignedOnDay(assignments, dayKey) {
+  const names = new Set();
+  state.config.homes.forEach((home) => {
+    const dayData = (assignments.homes[home.id] || {})[dayKey] || {};
+    Object.values(dayData).forEach((v) => { if (v) names.add(v); });
+  });
+  state.config.relievers.forEach((r) => {
+    const cell = relieverCellData((assignments.relievers[r.id] || {})[dayKey]);
+    if (cell.name) names.add(cell.name);
+  });
+  return names;
+}
+
+function shiftCountsThisWeek(assignments) {
+  const counts = {};
+  const bump = (name) => { if (name) counts[name] = (counts[name] || 0) + 1; };
+  state.config.homes.forEach((home) => {
+    Object.values(assignments.homes[home.id] || {}).forEach((dayData) => {
+      Object.values(dayData || {}).forEach(bump);
+    });
+  });
+  state.config.relievers.forEach((r) => {
+    Object.values(assignments.relievers[r.id] || {}).forEach((raw) => bump(relieverCellData(raw).name));
+  });
+  return counts;
+}
+
+// Available = not already assigned to another slot that day, and no
+// approved day off that date. Ranked by fewest shifts this week (spreads
+// hours fairly), then name — no hardcoded names, home, or care-home-specific
+// logic, so this works the same for any operator's roster.
+function suggestForGap(gap, assignments, dayOffSet) {
+  const dISO = toISODate(gap.date);
+  const assignedToday = namesAssignedOnDay(assignments, gap.day);
+  const counts = shiftCountsThisWeek(assignments);
+  return state.staff
+    .filter((s) => !assignedToday.has(s.name) && !dayOffSet.has(`${dISO}|${s.name}`))
+    .map((s) => ({ name: s.name, shifts: counts[s.name] || 0 }))
+    .sort((a, b) => a.shifts - b.shifts || a.name.localeCompare(b.name));
+}
+
 
 // ---------------------------------------------------------------------------
 // Data — chat (Ask Tello)
@@ -846,7 +1140,26 @@ async function clearChatHistory() {
 // ---------------------------------------------------------------------------
 // Render — app shell
 // ---------------------------------------------------------------------------
+const ADMIN_ONLY_TABS = ['staff', 'chat'];
+
+function applyRoleUI() {
+  document.getElementById('roleBadge').style.display = isAdmin() ? 'none' : '';
+  document.querySelectorAll('.nav-btn[data-role]').forEach((b) => {
+    b.classList.toggle('nav-hidden', b.dataset.role !== state.role);
+  });
+  if (!isAdmin() && ADMIN_ONLY_TABS.includes(state.tab)) state.tab = 'schedule';
+}
+
+function renderCurrentTab() {
+  if (state.tab === 'schedule') renderSchedule();
+  if (state.tab === 'today') renderToday();
+  if (state.tab === 'staff') renderStaff();
+  if (state.tab === 'dayoff') renderDayOff();
+  if (state.tab === 'chat') renderGapResolver();
+}
+
 function renderApp() {
+  applyRoleUI();
   document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.tab));
   document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
   const view = document.getElementById('view-' + state.tab);
@@ -854,26 +1167,38 @@ function renderApp() {
   if (state.tab === 'schedule') renderSchedule();
   if (state.tab === 'today') renderToday();
   if (state.tab === 'chat') renderChat();
+  renderCurrentTab();
 }
 
 // ---------------------------------------------------------------------------
 // Render — Schedule board
 // ---------------------------------------------------------------------------
 async function renderSchedule() {
+  if (!isAdmin()) return renderMySchedule();
+
   const ws = weekStartForOffset(state.weekOffset);
   const wsStr = toISODate(ws);
   const assignments = await loadWeek(wsStr);
   const days = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(ws, i) }));
   const todayStr = toISODate(new Date());
   const label = `${fmtShort(ws)} – ${fmtShort(addDays(ws, 6))}, ${addDays(ws, 6).getFullYear()}`;
+  const dayOffSet = approvedDayOffSet();
 
   const dayHeaderCells = days.map((d) => `
     <th class="${toISODate(d.date) === todayStr ? 'is-today' : ''}">
       ${d.label}<br><span class="day-date">${fmtShort(d.date)}</span>
     </th>`).join('');
 
-  const homesRows = state.config.homes.map((home) => renderHomeRows(home, days, assignments)).join('');
-  const relieverRows = state.config.relievers.map((r) => renderRelieverRow(r, days, assignments)).join('');
+  const homesRows = state.config.homes.map((home) => renderHomeRows(home, days, assignments, dayOffSet)).join('');
+  const relieverRows = state.config.relievers.map((r) => renderRelieverRow(r, days, assignments, dayOffSet)).join('');
+  const relieverSection = state.relieverViewMode === 'month'
+    ? await renderRelieverMonth(dayOffSet)
+    : `<div class="grid-wrap">
+        <table class="schedule-grid" id="relieversTable">
+          <thead><tr><th class="row-head" colspan="2">Reliever</th>${dayHeaderCells}</tr></thead>
+          <tbody>${relieverRows}</tbody>
+        </table>
+      </div>`;
 
   const managePanel = state.manageOpen ? `
     <div id="managePanel" class="manage-panel no-print">
@@ -917,17 +1242,23 @@ async function renderSchedule() {
         <tbody>${homesRows}</tbody>
       </table>
     </div>
-    <h3 class="section-title">Reliever Pool</h3>
-    <div class="grid-wrap">
-      <table class="schedule-grid" id="relieversTable">
-        <thead><tr><th class="row-head" colspan="2">Reliever</th>${dayHeaderCells}</tr></thead>
-        <tbody>${relieverRows}</tbody>
-      </table>
+    <div class="reliever-toggle">
+      <h3 class="section-title" style="margin:0;">Reliever Pool</h3>
+      <div class="view-toggle no-print">
+        <button data-action="reliever-view" data-mode="week" class="${state.relieverViewMode === 'week' ? 'active' : ''}">Week</button>
+        <button data-action="reliever-view" data-mode="month" class="${state.relieverViewMode === 'month' ? 'active' : ''}">Month</button>
+      </div>
     </div>
+    ${relieverSection}
   `;
 }
 
-function renderHomeRows(home, days, assignments) {
+function cellStateClass(val, flagged) {
+  if (!val) return 'cell-empty';
+  return flagged ? 'cell-dayoff' : 'cell-filled';
+}
+
+function renderHomeRows(home, days, assignments, dayOffSet) {
   const slots = [['cg1', 'Caregiver 1'], ['cg2', 'Caregiver 2'], ['night', 'Night Shift']];
   const homeData = assignments.homes[home.id] || {};
   return slots.map(([slotKey, slotLabel], idx) => `
@@ -937,21 +1268,389 @@ function renderHomeRows(home, days, assignments) {
       ${days.map((d) => {
         const dayData = homeData[d.key] || {};
         const val = dayData[slotKey] || '';
-        return `<td><input type="text" class="cell-input" data-kind="home" data-home="${home.id}" data-day="${d.key}" data-slot="${slotKey}" value="${esc(val)}" placeholder="—" /></td>`;
+        const flagged = val && dayOffSet.has(`${toISODate(d.date)}|${val}`);
+        return `<td class="${cellStateClass(val, flagged)}">${staffCell({ kind: 'home', home: home.id, day: d.key, slot: slotKey }, val, flagged)}</td>`;
       }).join('')}
     </tr>`).join('');
 }
 
-function renderRelieverRow(reliever, days, assignments) {
+function renderRelieverRow(reliever, days, assignments, dayOffSet) {
   const relData = assignments.relievers[reliever.id] || {};
   return `
     <tr>
       <th class="row-head" colspan="2">${esc(reliever.name)}</th>
       ${days.map((d) => {
-        const val = relData[d.key] || '';
-        return `<td><input type="text" class="cell-input" data-kind="reliever" data-reliever="${reliever.id}" data-day="${d.key}" value="${esc(val)}" placeholder="—" /></td>`;
+        const cell = relieverCellData(relData[d.key]);
+        const dISO = toISODate(d.date);
+        const flagged = cell.name && dayOffSet.has(`${dISO}|${cell.name}`);
+        const nameSelect = staffCell({ kind: 'reliever', reliever: reliever.id, day: d.key }, cell.name, flagged);
+        const locationSelect = locationCell({ kind: 'reliever-location', reliever: reliever.id, day: d.key }, cell.location);
+        return `<td class="${cellStateClass(cell.name, flagged)}">${nameSelect}${locationSelect}</td>`;
       }).join('')}
     </tr>`;
+}
+
+// Schedule Board cells are dropdowns sourced from the staff directory, with
+// a "Custom name…" escape hatch for names not yet in the directory (and a
+// synthetic option so any pre-existing free-text value still displays).
+// `flagged` marks a cell whose assigned staff member has an approved day
+// off on that date, per Day Off Requests.
+function staffCell(dataAttrs, val, flagged) {
+  const dataStr = Object.entries(dataAttrs).map(([k, v]) => `data-${k}="${esc(v)}"`).join(' ');
+  const names = state.staff.map((s) => s.name);
+  const knownOrBlank = val === '' || names.includes(val);
+  const opts = [`<option value="">—</option>`];
+  names.forEach((n) => opts.push(`<option value="${esc(n)}" ${n === val ? 'selected' : ''}>${esc(n)}</option>`));
+  if (!knownOrBlank) opts.push(`<option value="${esc(val)}" selected>${esc(val)}</option>`);
+  opts.push(`<option value="__custom__">+ Custom name…</option>`);
+  const badge = flagged ? `<span class="dayoff-badge" title="Approved day off">🌴</span>` : '';
+  return `<select class="cell-input" ${dataStr}>${opts.join('')}</select>${badge}`;
+}
+
+// Location dropdown for a reliever/day cell — options are the currently
+// configured homes (where a reliever would actually be deployed), plus a
+// "Custom…" escape hatch for anything else (an office, a training site).
+function locationCell(dataAttrs, val) {
+  const dataStr = Object.entries(dataAttrs).map(([k, v]) => `data-${k}="${esc(v)}"`).join(' ');
+  const names = state.config.homes.map((h) => h.name);
+  const knownOrBlank = val === '' || names.includes(val);
+  const opts = [`<option value="">— location —</option>`];
+  names.forEach((n) => opts.push(`<option value="${esc(n)}" ${n === val ? 'selected' : ''}>${esc(n)}</option>`));
+  if (!knownOrBlank) opts.push(`<option value="${esc(val)}" selected>${esc(val)}</option>`);
+  opts.push(`<option value="__custom__">+ Custom…</option>`);
+  return `<select class="cell-input cell-location" ${dataStr}>${opts.join('')}</select>`;
+}
+
+// ---------------------------------------------------------------------------
+// Render — Reliever Pool monthly calendar (Sun–Sat, read-only overview;
+// edits still happen in the Week view's live dropdowns)
+// ---------------------------------------------------------------------------
+function computeMonthGrid(monthOffset) {
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+  const last = new Date(now.getFullYear(), now.getMonth() + monthOffset + 1, 0);
+  const gridStart = addDays(first, -first.getDay());
+  const gridEnd = addDays(last, 6 - last.getDay());
+  const days = [];
+  for (let d = new Date(gridStart); d <= gridEnd; d = addDays(d, 1)) days.push(new Date(d));
+  return { first, days };
+}
+
+async function renderRelieverMonth(dayOffSet) {
+  const { first, days } = computeMonthGrid(state.monthOffset);
+  const weekStarts = [...new Set(days.map((d) => toISODate(startOfWeek(d))))];
+  const weekAssignments = {};
+  await Promise.all(weekStarts.map(async (ws) => { weekAssignments[ws] = await loadWeek(ws); }));
+
+  const monthLabel = first.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const dayHeaders = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => `<th>${d}</th>`).join('');
+
+  const cells = days.map((d) => {
+    const inMonth = d.getMonth() === first.getMonth();
+    const wsStr = toISODate(startOfWeek(d));
+    const dayKey = DAY_KEYS[(d.getDay() + 6) % 7];
+    const assignments = weekAssignments[wsStr] || emptyAssignments();
+    const dISO = toISODate(d);
+    const working = [];
+    state.config.relievers.forEach((r) => {
+      const cell = relieverCellData((assignments.relievers[r.id] || {})[dayKey]);
+      if (cell.name) working.push(cell);
+    });
+    const onDayOff = working.filter((c) => dayOffSet.has(`${dISO}|${c.name}`));
+    const active = working.filter((c) => !dayOffSet.has(`${dISO}|${c.name}`));
+    const cellClass = !inMonth ? 'month-cell outside' : (working.length ? 'month-cell' : 'month-cell empty');
+    return `
+      <td class="${cellClass}">
+        <div class="month-daynum">${d.getDate()}</div>
+        ${active.map((c) => `<div class="month-entry filled">${esc(c.name)}${c.location ? ` <span class="month-loc">— ${esc(c.location)}</span>` : ''}</div>`).join('')}
+        ${onDayOff.map((c) => `<div class="month-entry dayoff">🌴 ${esc(c.name)}</div>`).join('')}
+        ${(!working.length && inMonth) ? `<div class="month-entry no-relievers">No relievers</div>` : ''}
+      </td>`;
+  });
+
+  const rows = [];
+  for (let i = 0; i < cells.length; i += 7) rows.push(`<tr>${cells.slice(i, i + 7).join('')}</tr>`);
+
+  return `
+    <div class="week-bar no-print">
+      <button class="btn-icon" data-action="prev-month" title="Previous month">‹</button>
+      <div class="week-label">${monthLabel}</div>
+      <button class="btn-icon" data-action="next-month" title="Next month">›</button>
+      <button class="btn-outline" data-action="today-month">This Month</button>
+    </div>
+    <div class="grid-wrap">
+      <table class="schedule-grid month-grid">
+        <thead><tr>${dayHeaders}</tr></thead>
+        <tbody>${rows.join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Render — Tello Gap Resolver (Chat tab)
+// ---------------------------------------------------------------------------
+async function renderGapResolver() {
+  if (!isAdmin()) {
+    document.getElementById('view-chat').innerHTML = `
+      <div class="placeholder-view" style="display:flex; min-height:40vh;">
+        <div class="placeholder">
+          <div class="placeholder-icon">🧩</div>
+          <h2>Tello</h2>
+          <p>Gap suggestions are for admins.</p>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const ws = weekStartForOffset(state.weekOffset);
+  const wsStr = toISODate(ws);
+  const assignments = await loadWeek(wsStr);
+  const days = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(ws, i) }));
+  const label = `${fmtShort(ws)} – ${fmtShort(addDays(ws, 6))}, ${addDays(ws, 6).getFullYear()}`;
+  const dayOffSet = approvedDayOffSet();
+  const gaps = findScheduleGaps(assignments, days);
+
+  const gapCards = gaps.length ? gaps.map((gap) => {
+    const candidates = suggestForGap(gap, assignments, dayOffSet);
+    const dateLabel = `${gap.dayLabel} ${fmtShort(gap.date)}`;
+    if (!candidates.length) {
+      return `
+        <div class="card" style="padding:12px 14px;">
+          <div class="reminder-title">${esc(gap.label)} — ${dateLabel}</div>
+          <div class="muted" style="margin-top:6px;">No available staff found for this slot.</div>
+        </div>`;
+    }
+    const top = candidates[0];
+    const shiftsLabel = top.shifts === 1 ? '1 shift' : `${top.shifts} shifts`;
+    const options = candidates.map((c, i) =>
+      `<option value="${esc(c.name)}" ${i === 0 ? 'selected' : ''}>${esc(c.name)} (${c.shifts})</option>`).join('');
+    return `
+      <div class="card" style="padding:12px 14px;">
+        <div class="reminder-title">${esc(gap.label)} — ${dateLabel}</div>
+        <div class="muted" style="margin:6px 0;">💡 ${esc(top.name)} is available — not assigned ${fmtShort(gap.date)}, ${shiftsLabel} this week.</div>
+        <form data-form="gap-assign" data-kind="${gap.kind}" data-home="${gap.home || ''}" data-slot="${gap.slot || ''}" data-reliever="${gap.reliever || ''}" data-day="${gap.day}" class="inline-form">
+          <select name="name">${options}</select>
+          <button type="submit" class="btn-primary">Assign</button>
+        </form>
+      </div>`;
+  }).join('') : `<div class="card"><p style="margin:0;">🎉 No gaps this week — every slot is filled.</p></div>`;
+
+  document.getElementById('view-chat').innerHTML = `
+    <div class="week-bar no-print">
+      <button class="btn-icon" data-action="prev-week" title="Previous week">‹</button>
+      <div class="week-label">${label}</div>
+      <button class="btn-icon" data-action="next-week" title="Next week">›</button>
+      <button class="btn-outline" data-action="today-week">Today</button>
+    </div>
+    <h3 class="section-title" style="margin-top:0;">Tello — Gap Resolver</h3>
+    <p class="muted">Checks who's not already assigned that day and has no approved day off, ranked by fewest shifts this week.</p>
+    <div class="list">${gapCards}</div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Render — My Schedule (caregiver)
+// ---------------------------------------------------------------------------
+async function renderMySchedule() {
+  const me = state.staff.find((s) => s.id === state.staffMemberId);
+  if (!me) {
+    document.getElementById('view-schedule').innerHTML = `
+      <div class="placeholder-view" style="display:flex; min-height:40vh;">
+        <div class="placeholder">
+          <div class="placeholder-icon">🗓️</div>
+          <h2>My Schedule</h2>
+          <p>Your staff profile isn't linked to your login yet — ask your admin to finish setting it up in the Staff tab.</p>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const ws = weekStartForOffset(state.weekOffset);
+  const wsStr = toISODate(ws);
+  const assignments = await loadWeek(wsStr);
+  const days = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(ws, i) }));
+  const label = `${fmtShort(ws)} – ${fmtShort(addDays(ws, 6))}, ${addDays(ws, 6).getFullYear()}`;
+  const dayOffSet = approvedDayOffSet();
+
+  const rows = days.map((d) => {
+    const dISO = toISODate(d.date);
+    const shifts = [];
+    state.config.homes.forEach((home) => {
+      const dayData = (assignments.homes[home.id] || {})[d.key] || {};
+      [['cg1', 'Caregiver 1'], ['cg2', 'Caregiver 2'], ['night', 'Night Shift']].forEach(([slotKey, slotLabel]) => {
+        if (dayData[slotKey] === me.name) shifts.push(`${esc(home.name)} — ${slotLabel}`);
+      });
+    });
+    state.config.relievers.forEach((r) => {
+      const cell = relieverCellData((assignments.relievers[r.id] || {})[d.key]);
+      if (cell.name === me.name) shifts.push(`Reliever — ${esc(r.name)}${cell.location ? ` (${esc(cell.location)})` : ''}`);
+    });
+    const isDayOff = dayOffSet.has(`${dISO}|${me.name}`);
+    return `
+      <div class="shift-row">
+        <div class="shift-home">${d.label} <span class="day-date">${fmtShort(d.date)}</span></div>
+        <div class="shift-slots">
+          ${isDayOff ? `<span class="unfilled" style="color:var(--danger);">🌴 Approved day off</span>` : ''}
+          ${shifts.length ? shifts.map((s) => `<span class="filled">${s}</span>`).join('') : (isDayOff ? '' : `<span class="muted">Not scheduled</span>`)}
+        </div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('view-schedule').innerHTML = `
+    <div class="week-bar no-print">
+      <button class="btn-icon" data-action="prev-week" title="Previous week">‹</button>
+      <div class="week-label">${label}</div>
+      <button class="btn-icon" data-action="next-week" title="Next week">›</button>
+      <button class="btn-outline" data-action="today-week">Today</button>
+    </div>
+    <section class="card">
+      <h3>My Schedule — ${esc(me.name)}</h3>
+      ${rows}
+    </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Render — Staff directory
+// ---------------------------------------------------------------------------
+function renderStaff() {
+  const homeOptions = state.config.homes.map((h) => `<option value="${h.id}">${esc(h.name)}</option>`).join('');
+
+  document.getElementById('view-staff').innerHTML = `
+    <h3 class="section-title" style="margin-top:0;">Add Staff Member</h3>
+    <div class="manage-panel no-print">
+      <div class="manage-col" style="flex:1 1 100%;">
+        <form data-form="add-staff" class="inline-form">
+          <input type="text" name="name" placeholder="Full name" required />
+          <select name="role">
+            <option value="caregiver">Caregiver</option>
+            <option value="admin">Admin</option>
+          </select>
+          <select name="home_id">
+            <option value="">Unassigned</option>
+            ${homeOptions}
+          </select>
+          <input type="text" name="contact" placeholder="Contact (phone)" />
+          <input type="date" name="birthday" title="Birthday (optional)" />
+          <button type="submit" class="btn-primary">+ Add Staff</button>
+        </form>
+      </div>
+    </div>
+
+    <h3 class="section-title">Staff (${state.staff.length})</h3>
+    <div class="list">
+      ${state.staff.length ? state.staff.map(renderStaffRow).join('') : `<div class="muted">No staff added yet.</div>`}
+    </div>
+
+    ${renderDayOffAdminSection()}
+  `;
+}
+
+function renderDayOffAdminSection() {
+  const rows = state.dayOffRequests.slice().sort((a, b) => {
+    if ((a.status === 'pending') !== (b.status === 'pending')) return a.status === 'pending' ? -1 : 1;
+    return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+  });
+  return `
+    <h3 class="section-title">Day Off Requests</h3>
+    <div class="list">
+      ${rows.length ? rows.map(renderDayOffRow).join('') : `<div class="muted">No requests yet.</div>`}
+    </div>`;
+}
+
+function dayOffBadge(status) {
+  const color = status === 'approved' ? 'var(--positive)' : status === 'denied' ? 'var(--danger)' : 'var(--accent)';
+  return `<span style="color:${color}; font-weight:700; font-size:12px; text-transform:capitalize;">${status}</span>`;
+}
+
+function renderDayOffRow(r) {
+  const staff = state.staff.find((s) => s.id === r.staff_member_id);
+  return `
+    <div class="reminder-item">
+      <div class="reminder-body">
+        <div class="reminder-title">${esc(staff ? staff.name : 'Unknown staff')} — ${esc(r.date)}</div>
+        ${r.reason ? `<div class="reminder-note">${esc(r.reason)}</div>` : ''}
+      </div>
+      ${dayOffBadge(r.status)}
+      ${r.status === 'pending' ? `
+        <button class="btn-outline small" data-action="dayoff-approve" data-id="${r.id}">Approve</button>
+        <button class="btn-outline small" data-action="dayoff-deny" data-id="${r.id}">Deny</button>` : ''}
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Render — Day Off (caregiver)
+// ---------------------------------------------------------------------------
+function renderDayOff() {
+  document.getElementById('view-dayoff').innerHTML = `
+    <h3 class="section-title" style="margin-top:0;">Request a Day Off</h3>
+    <div class="card">
+      <form data-form="dayoff-request" class="inline-form">
+        <input type="date" name="date" required />
+        <input type="text" name="reason" placeholder="Reason (optional)" />
+        <button type="submit" class="btn-primary">Submit Request</button>
+      </form>
+    </div>
+
+    <h3 class="section-title">My Requests</h3>
+    <div class="list">
+      ${state.dayOffRequests.length ? state.dayOffRequests.map(renderMyDayOffRow).join('') : `<div class="muted">No requests yet.</div>`}
+    </div>
+  `;
+}
+
+function renderMyDayOffRow(r) {
+  return `
+    <div class="reminder-item">
+      <div class="reminder-body">
+        <div class="reminder-title">${esc(r.date)}</div>
+        ${r.reason ? `<div class="reminder-note">${esc(r.reason)}</div>` : ''}
+      </div>
+      ${dayOffBadge(r.status)}
+      ${r.status === 'pending' ? `<button class="btn-remove" data-action="dayoff-cancel" data-id="${r.id}">✕</button>` : ''}
+    </div>`;
+}
+
+function renderStaffRow(s) {
+  const homeOptions = state.config.homes.map((h) =>
+    `<option value="${h.id}" ${s.home_id === h.id ? 'selected' : ''}>${esc(h.name)}</option>`).join('');
+  const bdayVal = (s.bday_month && s.bday_day)
+    ? `2000-${String(s.bday_month).padStart(2, '0')}-${String(s.bday_day).padStart(2, '0')}` : '';
+  return `
+    <div class="card" style="padding:12px 14px; margin-bottom:10px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        <input type="text" class="manage-name-input" style="flex:2; min-width:140px;" data-kind="staff-name" data-id="${s.id}" value="${esc(s.name)}" />
+        <select data-kind="staff-role" data-id="${s.id}">
+          <option value="caregiver" ${s.role === 'caregiver' ? 'selected' : ''}>Caregiver</option>
+          <option value="admin" ${s.role === 'admin' ? 'selected' : ''}>Admin</option>
+        </select>
+        <select data-kind="staff-home" data-id="${s.id}">
+          <option value="">Unassigned</option>
+          ${homeOptions}
+        </select>
+        <input type="text" placeholder="Contact (phone)" style="flex:1; min-width:120px;" data-kind="staff-contact" data-id="${s.id}" value="${esc(s.contact || '')}" />
+        <input type="date" title="Birthday" data-kind="staff-birthday" data-id="${s.id}" value="${bdayVal}" />
+        <button class="btn-remove" data-action="staff-delete" data-id="${s.id}" title="Remove">✕</button>
+      </div>
+      <div style="margin-top:8px;">
+        ${renderStaffLoginArea(s)}
+      </div>
+    </div>`;
+}
+
+function renderStaffLoginArea(s) {
+  if (s.auth_user_id) {
+    return `<span class="muted">🔑 Login active${s.email ? `: ${esc(s.email)}` : ''}</span>`;
+  }
+  if (state.staffLoginFormId === s.id) {
+    return `
+      <form data-form="staff-login" data-id="${s.id}" class="inline-form">
+        <input type="email" name="email" placeholder="Login email" required />
+        <input type="text" name="password" placeholder="Temporary password (6+ chars)" minlength="6" required />
+        <button type="submit" class="btn-primary">Create Login</button>
+        <button type="button" class="btn-outline" data-action="staff-login-cancel">Cancel</button>
+      </form>`;
+  }
+  return `<button class="btn-outline small" data-action="staff-create-login" data-id="${s.id}">+ Create Login</button>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -981,9 +1680,9 @@ async function renderToday() {
   }).join('');
 
   const relieverToday = state.config.relievers
-    .map((r) => ({ r, v: (assignments.relievers[r.id] || {})[dayKey] }))
-    .filter((x) => x.v)
-    .map((x) => `<div class="reliever-today-row"><b>${esc(x.r.name)}</b>: ${esc(x.v)}</div>`)
+    .map((r) => ({ r, cell: relieverCellData((assignments.relievers[r.id] || {})[dayKey]) }))
+    .filter((x) => x.cell.name)
+    .map((x) => `<div class="reliever-today-row"><b>${esc(x.r.name)}</b>: ${esc(x.cell.name)}${x.cell.location ? ` — ${esc(x.cell.location)}` : ''}</div>`)
     .join('') || `<div class="muted">No relievers deployed today.</div>`;
 
   document.getElementById('view-today').innerHTML = `
@@ -998,22 +1697,19 @@ async function renderToday() {
 
     <section class="card">
       <h3>Reminders</h3>
+      ${isAdmin() ? `
       <form data-form="reminder" class="inline-form">
         <input type="text" name="title" placeholder="Reminder title" required />
         <input type="text" name="note" placeholder="Note (optional)" />
         <input type="time" name="due_time" />
         <button type="submit" class="btn-primary">+ Add</button>
-      </form>
+      </form>` : ''}
       <div class="list">${renderReminders()}</div>
     </section>
 
     <section class="card">
       <h3>Birthdays</h3>
-      <form data-form="birthday" class="inline-form">
-        <input type="text" name="name" placeholder="Staff name" required />
-        <input type="date" name="date" required />
-        <button type="submit" class="btn-primary">+ Add</button>
-      </form>
+      ${isAdmin() ? `<p style="font-size:12px; margin-top:-4px;">Set a staff member's birthday from the Staff tab.</p>` : ''}
       <div class="list">${renderBirthdays(now)}</div>
     </section>
   `;
@@ -1023,12 +1719,12 @@ function renderReminders() {
   if (!state.reminders.length) return `<div class="muted">No reminders yet.</div>`;
   return state.reminders.map((r) => `
     <div class="reminder-item ${r.done ? 'done' : ''}">
-      <input type="checkbox" data-kind="reminder-done" data-id="${r.id}" ${r.done ? 'checked' : ''} />
+      <input type="checkbox" data-kind="reminder-done" data-id="${r.id}" ${r.done ? 'checked' : ''} ${isAdmin() ? '' : 'disabled'} />
       <div class="reminder-body">
         <div class="reminder-title">${esc(r.title)}${r.due_time ? ` <span class="due-time">${esc(r.due_time)}</span>` : ''}</div>
         ${r.note ? `<div class="reminder-note">${esc(r.note)}</div>` : ''}
       </div>
-      <button class="btn-remove" data-action="reminder-delete" data-id="${r.id}">✕</button>
+      ${isAdmin() ? `<button class="btn-remove" data-action="reminder-delete" data-id="${r.id}">✕</button>` : ''}
     </div>`).join('');
 }
 
@@ -1041,18 +1737,18 @@ function nextBirthdayDiff(month, day, now) {
 }
 
 function renderBirthdays(now) {
-  if (!state.birthdays.length) return `<div class="muted">No birthdays added yet.</div>`;
-  const withDiff = state.birthdays
-    .map((b) => ({ b, diff: nextBirthdayDiff(b.bday_month, b.bday_day, now) }))
+  const withBday = state.staff.filter((s) => s.bday_month && s.bday_day);
+  if (!withBday.length) return `<div class="muted">No staff birthdays set yet.</div>`;
+  const withDiff = withBday
+    .map((s) => ({ s, diff: nextBirthdayDiff(s.bday_month, s.bday_day, now) }))
     .sort((a, b) => a.diff - b.diff);
-  return withDiff.map(({ b, diff }) => {
+  return withDiff.map(({ s, diff }) => {
     const label = diff === 0 ? 'Today!' : diff === 1 ? 'Tomorrow' : `in ${diff} days`;
-    const monthName = new Date(2000, b.bday_month - 1, 1).toLocaleDateString('en-US', { month: 'short' });
+    const monthName = new Date(2000, s.bday_month - 1, 1).toLocaleDateString('en-US', { month: 'short' });
     return `
       <div class="birthday-item ${diff === 0 ? 'today' : ''}">
-        <div><b>${esc(b.name)}</b> — ${monthName} ${b.bday_day}</div>
+        <div><b>${esc(s.name)}</b> — ${monthName} ${s.bday_day}</div>
         <div class="birthday-tag">${label}</div>
-        <button class="btn-remove" data-action="birthday-delete" data-id="${b.id}">✕</button>
       </div>`;
   }).join('');
 }
@@ -1101,14 +1797,30 @@ function onGlobalClick(e) {
       break;
     case 'prev-week':
       state.weekOffset -= 1;
-      renderSchedule();
+      renderCurrentTab();
       break;
     case 'next-week':
       state.weekOffset += 1;
-      renderSchedule();
+      renderCurrentTab();
       break;
     case 'today-week':
       state.weekOffset = 0;
+      renderCurrentTab();
+      break;
+    case 'reliever-view':
+      state.relieverViewMode = btn.dataset.mode;
+      renderSchedule();
+      break;
+    case 'prev-month':
+      state.monthOffset -= 1;
+      renderSchedule();
+      break;
+    case 'next-month':
+      state.monthOffset += 1;
+      renderSchedule();
+      break;
+    case 'today-month':
+      state.monthOffset = 0;
       renderSchedule();
       break;
     case 'manage-toggle':
@@ -1141,8 +1853,25 @@ function onGlobalClick(e) {
     case 'reminder-delete':
       deleteReminder(btn.dataset.id);
       break;
-    case 'birthday-delete':
-      deleteBirthday(btn.dataset.id);
+    case 'staff-delete':
+      deleteStaffMember(btn.dataset.id);
+      break;
+    case 'staff-create-login':
+      state.staffLoginFormId = btn.dataset.id;
+      renderStaff();
+      break;
+    case 'staff-login-cancel':
+      state.staffLoginFormId = null;
+      renderStaff();
+      break;
+    case 'dayoff-approve':
+      decideDayOffRequest(btn.dataset.id, 'approved');
+      break;
+    case 'dayoff-deny':
+      decideDayOffRequest(btn.dataset.id, 'denied');
+      break;
+    case 'dayoff-cancel':
+      cancelDayOffRequest(btn.dataset.id);
       break;
     case 'auth-tab':
       state.authMode = btn.dataset.mode;
@@ -1166,14 +1895,28 @@ function onGlobalSubmit(e) {
     if (!title) return;
     addReminder(title, fd.get('note').trim(), fd.get('due_time'));
     form.reset();
-  } else if (form.dataset.form === 'birthday') {
+  } else if (form.dataset.form === 'add-staff') {
     e.preventDefault();
     const fd = new FormData(form);
     const name = fd.get('name').trim();
-    const dateVal = fd.get('date');
-    if (!name || !dateVal) return;
-    const [, m, d] = dateVal.split('-').map(Number);
-    addBirthday(name, m, d);
+    if (!name) return;
+    const bday = fd.get('birthday');
+    const [, bm, bd] = bday ? bday.split('-').map(Number) : [];
+    addStaffMember(name, fd.get('role'), fd.get('home_id') || null, bm, bd, fd.get('contact').trim());
+    form.reset();
+  } else if (form.dataset.form === 'staff-login') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const email = fd.get('email').trim();
+    const password = fd.get('password');
+    if (!email || !password) return;
+    createStaffLogin(form.dataset.id, email, password);
+  } else if (form.dataset.form === 'dayoff-request') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const date = fd.get('date');
+    if (!date) return;
+    submitDayOffRequest(date, fd.get('reason').trim());
     form.reset();
   } else if (form.dataset.form === 'chat') {
     e.preventDefault();
@@ -1182,33 +1925,33 @@ function onGlobalSubmit(e) {
     if (!text || state.chatSending) return;
     form.reset();
     sendChatMessage(text);
+  } else if (form.dataset.form === 'gap-assign') {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const name = fd.get('name');
+    const { kind, home, slot, reliever, day } = form.dataset;
+    if (kind === 'home') setCellValue({ kind: 'home', home, day, slot }, name);
+    else if (kind === 'reliever') setCellValue({ kind: 'reliever', reliever, day }, name);
+    renderGapResolver();
   } else if (form.id === 'authForm') {
     e.preventDefault();
     handleAuthSubmit(form);
   }
 }
 
-function onGlobalInput(e) {
-  const t = e.target;
-  if (!t.classList.contains('cell-input')) return;
-  const ws = weekStartForOffset(state.weekOffset);
-  const wsStr = toISODate(ws);
-  const assignments = state.scheduleCache[wsStr] || (state.scheduleCache[wsStr] = emptyAssignments());
-  if (t.dataset.kind === 'home') {
-    const { home, day, slot } = t.dataset;
-    assignments.homes[home] = assignments.homes[home] || {};
-    assignments.homes[home][day] = assignments.homes[home][day] || {};
-    assignments.homes[home][day][slot] = t.value;
-  } else if (t.dataset.kind === 'reliever') {
-    const { reliever, day } = t.dataset;
-    assignments.relievers[reliever] = assignments.relievers[reliever] || {};
-    assignments.relievers[reliever][day] = t.value;
-  }
-  queueSaveWeek(wsStr);
-}
-
 function onGlobalChange(e) {
   const t = e.target;
+  if (t.classList.contains('cell-input')) {
+    if (t.value === '__custom__') {
+      const label = t.dataset.kind === 'reliever-location' ? 'Location:' : 'Staff name:';
+      const val = window.prompt(label, '');
+      if (val && val.trim()) setCellValue(t.dataset, val.trim());
+      renderSchedule();
+      return;
+    }
+    setCellValue(t.dataset, t.value);
+    return;
+  }
   if (t.dataset.kind === 'reminder-done') {
     toggleReminder(t.dataset.id, t.checked);
   } else if (t.dataset.kind === 'home-name') {
@@ -1217,6 +1960,21 @@ function onGlobalChange(e) {
   } else if (t.dataset.kind === 'reliever-name') {
     const rel = state.config.relievers.find((r) => r.id === t.dataset.id);
     if (rel) { rel.name = t.value; saveConfig(); renderSchedule(); }
+  } else if (t.dataset.kind === 'staff-name') {
+    updateStaffMember(t.dataset.id, { name: t.value });
+  } else if (t.dataset.kind === 'staff-role') {
+    updateStaffMember(t.dataset.id, { role: t.value }).then(renderStaff);
+  } else if (t.dataset.kind === 'staff-home') {
+    updateStaffMember(t.dataset.id, { home_id: t.value || null });
+  } else if (t.dataset.kind === 'staff-contact') {
+    updateStaffMember(t.dataset.id, { contact: t.value.trim() || null });
+  } else if (t.dataset.kind === 'staff-birthday') {
+    if (t.value) {
+      const [, m, d] = t.value.split('-').map(Number);
+      updateStaffMember(t.dataset.id, { bday_month: m, bday_day: d });
+    } else {
+      updateStaffMember(t.dataset.id, { bday_month: null, bday_day: null });
+    }
   }
 }
 
@@ -1226,7 +1984,6 @@ function onGlobalChange(e) {
 function init() {
   document.addEventListener('click', onGlobalClick);
   document.addEventListener('submit', onGlobalSubmit);
-  document.addEventListener('input', onGlobalInput);
   document.addEventListener('change', onGlobalChange);
 
   sb.auth.onAuthStateChange((_event, session) => {
