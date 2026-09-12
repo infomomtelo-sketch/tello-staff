@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#1a3a2e" />
+<meta name="description" content="Tello Staff Privacy Policy." />
+<title>Privacy Policy — Tello Staff</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Crect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27%231a3a2e%27/%3E%3Ctext x=%2750%27 y=%2770%27 font-size=%2760%27 font-family=%27Arial,sans-serif%27 font-weight=%27bold%27 fill=%27%23e8c15c%27 text-anchor=%27middle%27%3ET%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/marketing.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a href="/" class="logo">Tello <span>Staff</span></a>
+    <nav class="site-nav">
+      <a href="/#features">Features</a>
+      <a href="/about.html">About</a>
+      <a href="/privacy.html">Privacy</a>
+      <a href="/terms.html">Terms</a>
+    </nav>
+    <a href="/app/" class="btn-cta">Sign In</a>
+  </div>
+</header>
+
+<div class="legal-page">
+  <div class="wrap" style="max-width: 720px;">
+    <h1>Privacy Policy</h1>
+    <div class="legal-updated">Last updated: not yet published — fill in a date once reviewed.</div>
+
+    <div class="legal-notice">
+      <strong>This is a starting-point template, not legal advice.</strong>
+      It describes what the app actually does with data as of this writing.
+      Before relying on it for a real facility handling resident-adjacent
+      information under Title 22 or similar regulation, have it reviewed by
+      someone qualified to advise on your specific obligations.
+    </div>
+
+    <h2>What this covers</h2>
+    <p>This policy describes how Tello Staff handles data for the account
+    holder(s) who use the app to manage staff scheduling. It does not cover
+    resident health information — Tello Staff is a staffing tool, not a
+    resident records system, and should not be used to store protected health
+    information.</p>
+
+    <h2>What we collect</h2>
+    <ul>
+      <li><strong>Account data</strong> — the email address and password used
+      to sign in (handled by Supabase Auth; passwords are never visible to us
+      in plain text).</li>
+      <li><strong>Schedule data you enter</strong> — home names, staff names,
+      shift assignments, reminders, and birthdays you type into the app.</li>
+      <li><strong>Staff directory data</strong> — names, roles, phone numbers,
+      and notes you add for staff members.</li>
+      <li><strong>Chat messages</strong> — questions you ask the "Ask Tello"
+      feature and its replies, stored so your conversation persists between
+      visits.</li>
+    </ul>
+
+    <h2>How it's used</h2>
+    <p>Solely to operate the app for you: displaying your schedule, sending
+    your schedule data as context to the AI chat feature so it can answer
+    grounded in your actual roster, and nothing else. Data is not sold, and
+    is not used to train any AI model.</p>
+
+    <h2>Who else sees it</h2>
+    <ul>
+      <li><strong>Supabase</strong> hosts the database and handles
+      authentication. Your data is stored in Supabase's infrastructure under
+      this app's account.</li>
+      <li><strong>Anthropic</strong> processes messages sent to the "Ask
+      Tello" chat feature, including the schedule context sent with each
+      question, in order to generate a reply. See
+      <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener">Anthropic's privacy policy</a>
+      for how they handle API data.</li>
+      <li><strong>Cloudflare</strong> hosts and serves the application files.</li>
+    </ul>
+    <p>No other third parties receive your data.</p>
+
+    <h2>Data retention and deletion</h2>
+    <p>Data persists until you delete it in the app (staff records,
+    reminders, birthdays, chat history) or ask the account owner to remove
+    it. There is currently no self-service "delete my account" flow — contact
+    the account owner directly to request removal.</p>
+
+    <h2>Security</h2>
+    <p>Data is scoped per account via database-level access rules (row-level
+    security), so one account cannot read another's data. All traffic is
+    encrypted in transit (HTTPS).</p>
+
+    <h2>Children's privacy</h2>
+    <p>Tello Staff is a workplace tool for adult staff scheduling and is not
+    directed at children.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>If this policy changes in a way that matters, the date above will be
+    updated and, where practical, existing users will be notified.</p>
+
+    <h2>Contact</h2>
+    <p>Questions about this policy go to the account owner directly, through
+    whatever channel you already use to reach them.</p>
+  </div>
+</div>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-col">
+        <a href="/" class="logo">Tello <span>Staff</span></a>
+        <p style="margin-top: 14px; font-size: 14px;">Day-to-day staffing for residential care homes.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Product</h4>
+        <a href="/#features">Features</a>
+        <a href="/app/">Sign In</a>
+      </div>
+      <div class="footer-col">
+        <h4>Company</h4>
+        <a href="/about.html">About</a>
+        <a href="/privacy.html">Privacy Policy</a>
+        <a href="/terms.html">Terms of Service</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 Tello Staff. All rights reserved.</span>
+      <span>Built for one care home operator, and anyone else who needs it.</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

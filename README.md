@@ -4,10 +4,19 @@
 from the Tello AI advisor (`tello.html` / `tello-runp8`): this app is for
 day-to-day scheduling and shift operations.
 
-Static site (`index.html`) plus one Cloudflare Pages Function for the AI
-chat endpoint — no client-side build step, matching the other RunP8 apps.
+Static site plus one Cloudflare Pages Function for the AI chat endpoint —
+no client-side build step, matching the other RunP8 apps.
 
-## What's built
+## Site structure
+
+- `/index.html`, `/about.html`, `/privacy.html`, `/terms.html` — the public
+  marketing site (no login required). Shared styling in `/marketing.css`.
+- `/app/index.html` — the actual Tello Staff application (everything below).
+  Sign-in links throughout the marketing site point at `/app/`.
+- `/functions/api/chat.js` — the Chat tab's backend, served at `/api/chat`
+  regardless of which page calls it.
+
+## What's built (in `/app/`)
 
 - **Schedule Board** — configurable homes (default 8), one selected at a time,
   each with a free-text "Working" and "Day Off" list per day (any number of
@@ -48,9 +57,9 @@ data you still want; drop it yourself once you've checked.
 
 ### 2. Fill in the anon key
 
-Open `index.html` and set `SUPABASE_ANON_KEY` (Supabase → Project Settings →
-API → anon public key) — it ships with a placeholder that will not
-authenticate anyone until replaced.
+Open `app/index.html` and set `SUPABASE_ANON_KEY` (Supabase → Project
+Settings → API → anon public key) — it ships with a placeholder that will
+not authenticate anyone until replaced.
 
 ### 3. Anthropic API key (for Chat)
 
@@ -87,10 +96,11 @@ needed for day-to-day coverage questions.
 - Connect this repo, no build command, output directory = repo root.
   Cloudflare Pages auto-detects `functions/api/chat.js` and deploys it
   alongside the static site — no separate Worker to set up.
-- `REDIRECT_URL` in `index.html` is hardcoded to
-  `https://carehome-application-form.pages.dev` to match. If it changes, add
-  the new URL to Supabase → Authentication → URL Configuration → Redirect
-  URLs (the old one can be removed from that list once nothing points at it).
+- `REDIRECT_URL` in `app/index.html` is hardcoded to
+  `https://carehome-application-form.pages.dev/app/` to match. If it changes,
+  add the new URL to Supabase → Authentication → URL Configuration →
+  Redirect URLs (the old one can be removed from that list once nothing
+  points at it).
 
 ## Notes
 
@@ -104,3 +114,6 @@ needed for day-to-day coverage questions.
 - Chat doesn't read the Staff directory yet — its context is still built only
   from the Schedule Board, reminders, and birthdays, so it only knows names
   as they appear typed into the Schedule Board.
+- `privacy.html` and `terms.html` are starting-point templates, not legal
+  advice — each page says so up front. Have them reviewed before relying on
+  them, especially given the Title 22 regulatory context.
