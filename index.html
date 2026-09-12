@@ -26,7 +26,29 @@
     --accent-contrast: #1a3a2e;
     --positive: #6bd39a;
     --danger: #e5726b;
+    --danger-bg: rgba(229, 114, 107, 0.15);
+    --danger-text: #f3b3ae;
     --radius: 10px;
+    --auth-gradient: radial-gradient(circle at 50% 0%, #234a3b, var(--bg-page) 70%);
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg-page: #f2f6f3;
+    --bg-app: #ffffff;
+    --bg-card: #ffffff;
+    --bg-elevated: #eaf2ec;
+    --bg-input: #f6faf7;
+    --border: #cfe0d4;
+    --text: #16281f;
+    --text-muted: #5c7568;
+    --accent: #c99328;
+    --accent-contrast: #ffffff;
+    --positive: #2f9d67;
+    --danger: #c0392b;
+    --danger-bg: rgba(192, 57, 43, 0.10);
+    --danger-text: #8f2a1e;
+    --auth-gradient: radial-gradient(circle at 50% 0%, #e3efe6, var(--bg-page) 70%);
   }
   * { box-sizing: border-box; }
   html, body {
@@ -36,6 +58,7 @@
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     -webkit-font-smoothing: antialiased;
   }
+  body { transition: background-color 0.15s ease, color 0.15s ease; }
   button, input { font-family: inherit; }
   h1, h2, h3, h4 { margin: 0 0 8px; font-weight: 700; }
   p { margin: 0 0 8px; color: var(--text-muted); }
@@ -47,7 +70,7 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
-    background: radial-gradient(circle at 50% 0%, #234a3b, var(--bg-page) 70%);
+    background: var(--auth-gradient);
   }
   .auth-card {
     width: 100%;
@@ -114,11 +137,11 @@
   .config-warning {
     margin-top: 18px;
     padding: 10px 12px;
-    background: rgba(229, 114, 107, 0.15);
+    background: var(--danger-bg);
     border: 1px solid var(--danger);
     border-radius: 8px;
     font-size: 12px;
-    color: #f3b3ae;
+    color: var(--danger-text);
   }
 
   /* ---------- Inputs / buttons ---------- */
@@ -179,6 +202,8 @@
     font-size: 18px;
     cursor: pointer;
   }
+  .btn-icon.small { width: 32px; height: 32px; font-size: 15px; }
+  .header-actions { display: flex; align-items: center; gap: 8px; }
   .btn-remove {
     background: none;
     border: none;
@@ -474,9 +499,9 @@
   .chat-bubble.pending { color: var(--text-muted); font-style: italic; }
   .chat-bubble.error {
     align-self: flex-start;
-    background: rgba(229, 114, 107, 0.15);
+    background: var(--danger-bg);
     border: 1px solid var(--danger);
-    color: #f3b3ae;
+    color: var(--danger-text);
   }
   .chat-empty { color: var(--text-muted); font-size: 13px; text-align: center; padding: 24px 0; }
   .chat-input-bar { display: flex; gap: 8px; }
@@ -533,7 +558,10 @@
 <div id="app" class="app" style="display:none">
   <header class="app-header no-print">
     <div class="app-title">Tello <span>Staff</span></div>
-    <button class="btn-outline small" data-action="sign-out">Sign Out</button>
+    <div class="header-actions">
+      <button class="btn-icon small" data-action="toggle-theme" id="themeToggleBtn" title="Switch background">☀️</button>
+      <button class="btn-outline small" data-action="sign-out">Sign Out</button>
+    </div>
   </header>
 
   <main class="app-main">
@@ -1470,6 +1498,9 @@ function onGlobalClick(e) {
     case 'staff-delete':
       deleteStaffMember(btn.dataset.id);
       break;
+    case 'toggle-theme':
+      toggleTheme();
+      break;
   }
 }
 
@@ -1541,11 +1572,38 @@ function onGlobalChange(e) {
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Theme (light/dark background toggle)
+// ---------------------------------------------------------------------------
+const THEME_KEY = 'tello-staff-theme';
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', theme === 'light' ? '#ffffff' : '#1a3a2e');
+  const btn = document.getElementById('themeToggleBtn');
+  if (btn) btn.textContent = theme === 'light' ? '🌙' : '☀️';
+}
+
+function initTheme() {
+  let saved = 'dark';
+  try { saved = localStorage.getItem(THEME_KEY) || 'dark'; } catch { /* private mode etc. */ }
+  applyTheme(saved);
+}
+
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  applyTheme(next);
+  try { localStorage.setItem(THEME_KEY, next); } catch { /* private mode etc. */ }
+}
+
 function init() {
   document.addEventListener('click', onGlobalClick);
   document.addEventListener('submit', onGlobalSubmit);
   document.addEventListener('input', onGlobalInput);
   document.addEventListener('change', onGlobalChange);
+
+  initTheme();
 
   sb.auth.onAuthStateChange((_event, session) => {
     if (session && session.user) enterApp(session.user);

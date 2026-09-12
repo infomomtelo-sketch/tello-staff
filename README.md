@@ -29,6 +29,8 @@ chat endpoint — no client-side build step, matching the other RunP8 apps.
   yet — same single-admin model as the rest of the app.
 - Bottom nav: **Schedule**, **Today**, **Staff**, **Chat**.
 - Auth: Supabase email/password sign in, sign up, and password reset.
+- Light/dark background toggle (☀️/🌙 button, top right) — defaults to the
+  dark green theme, remembers the choice per browser via `localStorage`.
 
 ## Setup
 
