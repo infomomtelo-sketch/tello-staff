@@ -401,6 +401,15 @@
 
   /* ---------- Today view ---------- */
   .today-date { font-size: 20px; font-weight: 800; margin-bottom: 16px; }
+  .quote-card {
+    text-align: center;
+    background: linear-gradient(135deg, var(--bg-card), var(--bg-elevated));
+    position: relative;
+    padding-top: 8px;
+  }
+  .quote-mark { font-size: 42px; color: var(--accent); line-height: 1; font-family: Georgia, serif; opacity: 0.6; }
+  .quote-text { font-size: 15px; font-style: italic; color: var(--text); max-width: 520px; margin: 0 auto 10px; }
+  .quote-author { font-size: 13px; color: var(--accent); font-weight: 600; margin-bottom: 0; }
   .card {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -635,6 +644,36 @@ const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAY_LABELS_SUN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 let appEntered = false;
+
+// Same quote all day for everyone, changes at midnight — deterministic by
+// day-of-year, no state to store or fetch.
+const CAREGIVER_QUOTES = [
+  { text: "How far you go in life depends on your being tender with the young, compassionate with the aged, sympathetic with the striving, and tolerant of the weak and the strong — because someday you will have been all of these.", author: "George Washington Carver" },
+  { text: "Too often we underestimate the power of a touch, a smile, a kind word, a listening ear, an honest compliment, or the smallest act of caring, all of which have the potential to turn a life around.", author: "Leo Buscaglia" },
+  { text: "Not all of us can do great things. But we can do small things with great love.", author: "Mother Teresa" },
+  { text: "Caregiving often calls us to lean into love we didn't know possible.", author: "Tia Walker" },
+  { text: "People will forget what you said, people will forget what you did, but people will never forget how you made them feel.", author: "Maya Angelou" },
+  { text: "The best way to find yourself is to lose yourself in the service of others.", author: "Mahatma Gandhi" },
+  { text: "To care for those who once cared for us is one of the highest honours.", author: "Tia Walker" },
+  { text: "Life's most persistent and urgent question is: what are you doing for others?", author: "Martin Luther King Jr." },
+  { text: "Kindness is a language which the deaf can hear and the blind can see.", author: "Mark Twain" },
+  { text: "The simple act of caring is heroic.", author: "Edward Albert" },
+  { text: "We rise by lifting others.", author: "Robert Ingersoll" },
+  { text: "No act of kindness, no matter how small, is ever wasted.", author: "Aesop" },
+  { text: "Those who bring sunshine to the lives of others cannot keep it from themselves.", author: "James M. Barrie" },
+  { text: "Compassion is a verb.", author: "Thich Nhat Hanh" },
+  { text: "Service to others is the rent you pay for your room here on earth.", author: "Muhammad Ali" },
+  { text: "Everyone can be great, because everyone can serve.", author: "Martin Luther King Jr." },
+  { text: "The heart that gives, gathers.", author: "Marianne Moore" },
+  { text: "Love and kindness are never wasted. They always make a difference.", author: "Barbara De Angelis" },
+  { text: "In a world where you can be anything, be kind.", author: "Unknown" },
+  { text: "A single act of kindness throws out roots in all directions.", author: "Amelia Earhart" },
+];
+function caregiverQuoteOfDay(now) {
+  const start = new Date(now.getFullYear(), 0, 0);
+  const dayOfYear = Math.floor((now - start) / 86400000);
+  return CAREGIVER_QUOTES[dayOfYear % CAREGIVER_QUOTES.length];
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1282,8 +1321,16 @@ async function renderToday() {
     .map((x) => `<div class="reliever-today-row"><b>${esc(x.r.name)}</b>: ${esc(x.v)}</div>`)
     .join('') || `<div class="muted">No relievers deployed today.</div>`;
 
+  const quote = caregiverQuoteOfDay(now);
+
   document.getElementById('view-today').innerHTML = `
     <div class="today-date">${fmtLong(now)}</div>
+
+    <section class="card quote-card">
+      <div class="quote-mark">"</div>
+      <p class="quote-text">${esc(quote.text)}</p>
+      <div class="quote-author">— ${esc(quote.author)}</div>
+    </section>
 
     <section class="card">
       <h3>Shift Summary</h3>

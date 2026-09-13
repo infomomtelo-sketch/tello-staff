@@ -26,9 +26,10 @@ no client-side build step, matching the other RunP8 apps.
   Month view (Sunday-first, like a wall calendar) for the printable page that
   actually goes up on the board. An 11-slot reliever pool floats alongside it
   as its own always-current-week grid.
-- **Today's Board** — today's date, admin-added reminder cards (title, note,
-  due time), manually-entered staff birthdays, and a shift summary pulled
-  live from the Schedule Board.
+- **Today's Board** — today's date, a rotating caregiver quote-of-the-day
+  (same quote all day, changes at midnight, no setup needed), admin-added
+  reminder cards (title, note, due time), manually-entered staff birthdays,
+  and a shift summary pulled live from the Schedule Board.
 - **Chat** — ask Tello about coverage, gaps, or who's free. Every request is
   grounded in the current week's Schedule Board data, open reminders, and
   upcoming birthdays (built fresh client-side and sent as context on each
