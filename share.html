@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#1a3a2e" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Schedule — Tello Staff</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Crect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27%231a3a2e%27/%3E%3Ctext x=%2750%27 y=%2770%27 font-size=%2760%27 font-family=%27Arial,sans-serif%27 font-weight=%27bold%27 fill=%27%23e8c15c%27 text-anchor=%27middle%27%3ET%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/marketing.css" />
+<style>
+  .share-main { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+  .share-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+  .share-home-name { font-size: 26px; margin-bottom: 4px; }
+  .share-week { color: var(--text-muted); font-size: 14px; margin-bottom: 28px; }
+  .share-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 32px; }
+  table.share-table { border-collapse: collapse; width: 100%; min-width: 640px; }
+  .share-table th, .share-table td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; font-size: 13px; vertical-align: top; }
+  .share-table thead th { background: var(--bg-card); text-align: center; font-size: 12px; }
+  .share-table thead th.is-today { color: var(--accent); }
+  .share-table td.slot-label { background: var(--bg-card); color: var(--text-muted); white-space: nowrap; font-size: 12px; }
+  .share-table td.is-today-col { background: rgba(232, 193, 92, 0.06); }
+  .share-cell { white-space: pre-wrap; min-height: 20px; }
+  .share-cell.empty { color: var(--text-muted); }
+  .share-section-title { font-size: 16px; margin: 32px 0 14px; }
+  .reliever-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 32px; }
+  .reliever-row { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; font-size: 14px; }
+  .reliever-row b { color: var(--text); }
+  .reliever-deploy { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+  .request-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 24px; }
+  .request-card h2 { font-size: 17px; margin-bottom: 6px; }
+  .request-card p { font-size: 13px; margin-bottom: 18px; }
+  .request-form { display: flex; flex-direction: column; gap: 12px; }
+  .request-form input, .request-form textarea {
+    background: var(--bg-page);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    width: 100%;
+  }
+  .request-form textarea { min-height: 80px; resize: vertical; }
+  .request-form input:focus, .request-form textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .request-msg { font-size: 13px; margin-top: 4px; min-height: 18px; }
+  .request-msg.success { color: #6bd39a; }
+  .request-msg.error { color: #e5726b; }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a href="/" class="logo">Tello <span>Staff</span></a>
+  </div>
+</header>
+
+<main class="share-main">
+  <div id="content" class="share-state">Loading schedule…</div>
+</main>
+
+<script>
+function esc(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function fmtDateLabel(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function renderError(message) {
+  document.getElementById('content').innerHTML = `
+    <div class="share-state">
+      <h2>Can't load this schedule</h2>
+      <p>${esc(message)}</p>
+    </div>`;
+}
+
+function renderSchedule(data) {
+  const dayHeaders = data.days.map((d) => `
+    <th class="${d.date === data.today ? 'is-today' : ''}">${d.label}<br><span style="font-weight:400;color:var(--text-muted);">${fmtDateLabel(d.date)}</span></th>
+  `).join('');
+
+  const workingCells = data.days.map((d) => `
+    <td class="${d.date === data.today ? 'is-today-col' : ''}"><div class="share-cell ${d.working ? '' : 'empty'}">${d.working ? esc(d.working) : '—'}</div></td>
+  `).join('');
+
+  const dayOffCells = data.days.map((d) => `
+    <td class="${d.date === data.today ? 'is-today-col' : ''}"><div class="share-cell ${d.dayOff ? '' : 'empty'}">${d.dayOff ? esc(d.dayOff) : '—'}</div></td>
+  `).join('');
+
+  const relieversWithDeployments = data.relievers.filter((r) => r.deployments.length > 0);
+  const relieverHtml = relieversWithDeployments.length
+    ? relieversWithDeployments.map((r) => `
+        <div class="reliever-row">
+          <b>${esc(r.name)}</b>
+          <div class="reliever-deploy">${r.deployments.map((dep) => `${dep.label}: ${esc(dep.value)}`).join(' · ')}</div>
+        </div>`).join('')
+    : `<p style="font-size:13px;">No relievers deployed at this home this week.</p>`;
+
+  document.getElementById('content').innerHTML = `
+    <h1 class="share-home-name">${esc(data.homeName)}</h1>
+    <div class="share-week">This week's schedule</div>
+
+    <div class="share-table-wrap">
+      <table class="share-table">
+        <thead><tr><th>Field</th>${dayHeaders}</tr></thead>
+        <tbody>
+          <tr><td class="slot-label">Working</td>${workingCells}</tr>
+          <tr><td class="slot-label">Day Off</td>${dayOffCells}</tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="share-section-title">Reliever Pool</h3>
+    <div class="reliever-list">${relieverHtml}</div>
+
+    <div class="request-card">
+      <h2>Request a change</h2>
+      <p>Need a day off, or want to flag something about this schedule? Send a note — the admin will see it and follow up.</p>
+      <form id="requestForm" class="request-form">
+        <input type="text" name="staffName" placeholder="Your name" required maxlength="200" />
+        <input type="date" name="requestDate" />
+        <textarea name="note" placeholder="e.g. Need Friday off, or can someone cover my Tuesday night?" required maxlength="2000"></textarea>
+        <button type="submit" class="btn-cta" style="border:none;cursor:pointer;">Send Request</button>
+        <div id="requestMsg" class="request-msg"></div>
+      </form>
+    </div>
+  `;
+
+  document.getElementById('requestForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const msgEl = document.getElementById('requestMsg');
+    const submitBtn = form.querySelector('button[type=submit]');
+    const fd = new FormData(form);
+    const staffName = fd.get('staffName').trim();
+    const note = fd.get('note').trim();
+    if (!staffName || !note) return;
+
+    submitBtn.disabled = true;
+    msgEl.textContent = 'Sending…';
+    msgEl.className = 'request-msg';
+
+    try {
+      const res = await fetch('/api/share-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: new URLSearchParams(location.search).get('token'),
+          staffName,
+          requestDate: fd.get('requestDate') || null,
+          note,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || `Request failed (${res.status})`);
+      msgEl.textContent = 'Sent — thanks. The admin will follow up.';
+      msgEl.className = 'request-msg success';
+      form.reset();
+    } catch (err) {
+      msgEl.textContent = err.message;
+      msgEl.className = 'request-msg error';
+      submitBtn.disabled = false;
+    }
+  });
+}
+
+async function init() {
+  const token = new URLSearchParams(location.search).get('token');
+  if (!token) {
+    renderError('No link was provided. Ask the admin to resend the share link.');
+    return;
+  }
+  try {
+    const res = await fetch(`/api/share-data?token=${encodeURIComponent(token)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    renderSchedule(data);
+  } catch (err) {
+    renderError(err.message);
+  }
+}
+
+init();
+</script>
+</body>
+</html>

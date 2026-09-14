@@ -325,6 +325,8 @@
   .manage-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
   .manage-row { display: flex; align-items: center; gap: 6px; }
   .manage-name-input { flex: 1; }
+  .share-row { flex-wrap: wrap; }
+  .share-row-name { flex: 1; font-size: 14px; font-weight: 600; min-width: 100px; }
 
   .grid-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
   table.schedule-grid {
@@ -435,7 +437,7 @@
   .inline-form input[type="time"], .inline-form input[type="date"] { flex: 1; min-width: 110px; }
 
   .list { display: flex; flex-direction: column; gap: 8px; }
-  .reminder-item, .birthday-item {
+  .reminder-item, .birthday-item, .request-item {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -444,6 +446,10 @@
     border-radius: 8px;
     padding: 10px 12px;
   }
+  .request-item { align-items: flex-start; }
+  .request-item-body { flex: 1; }
+  .request-item-title { font-weight: 600; font-size: 14px; }
+  .request-item-note { color: var(--text-muted); font-size: 13px; margin-top: 3px; white-space: pre-wrap; }
   .reminder-item.done .reminder-title { text-decoration: line-through; color: var(--text-muted); }
   .reminder-body { flex: 1; }
   .reminder-title { font-weight: 600; font-size: 14px; }
@@ -638,6 +644,8 @@ const state = {
   chatMessages: [],
   chatSending: false,
   staff: [],
+  shareLinks: [],
+  requests: [],
 };
 
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -815,6 +823,9 @@ async function enterApp(user) {
     await loadBirthdays();
     await loadChatMessages();
     await loadStaff();
+    await loadShareLinks();
+    // Requests are re-fetched fresh every time Today's Board renders (see
+    // renderToday), so no need to load them here too.
   }
   renderApp();
 }
@@ -1102,6 +1113,62 @@ async function deleteStaffMember(id) {
 }
 
 // ---------------------------------------------------------------------------
+// Data — share links (public, read-only schedule pages, no login)
+// ---------------------------------------------------------------------------
+async function loadShareLinks() {
+  const { data, error } = await sb.from('tello_staff_share_links').select('*').eq('user_id', state.user.id);
+  if (error) console.error(error);
+  state.shareLinks = data || [];
+}
+
+async function createShareLink(homeId) {
+  const token = crypto.randomUUID().replace(/-/g, '');
+  const { error } = await sb.from('tello_staff_share_links')
+    .insert({ user_id: state.user.id, home_id: homeId, token });
+  if (error) { console.error(error); return; }
+  await loadShareLinks();
+  renderSchedule();
+}
+
+async function revokeShareLink(id) {
+  if (!window.confirm('Revoke this link? Anyone still holding it will lose access immediately.')) return;
+  const { error } = await sb.from('tello_staff_share_links')
+    .update({ revoked_at: new Date().toISOString() }).eq('id', id);
+  if (error) console.error(error);
+  await loadShareLinks();
+  renderSchedule();
+}
+
+function copyShareLink(token) {
+  const url = `${location.origin}/share.html?token=${token}`;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(
+      () => window.alert('Link copied:\n' + url),
+      () => window.prompt('Copy this link:', url)
+    );
+  } else {
+    window.prompt('Copy this link:', url);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Data — requests (submitted from a public share page)
+// ---------------------------------------------------------------------------
+async function loadRequests() {
+  const { data, error } = await sb.from('tello_staff_requests').select('*')
+    .eq('user_id', state.user.id).order('created_at', { ascending: false });
+  if (error) console.error(error);
+  state.requests = data || [];
+}
+
+async function markRequestHandled(id) {
+  const { error } = await sb.from('tello_staff_requests').update({ status: 'handled' }).eq('id', id);
+  if (error) console.error(error);
+  await loadRequests();
+  renderToday();
+}
+
+// ---------------------------------------------------------------------------
 // Render — app shell
 // ---------------------------------------------------------------------------
 function renderApp() {
@@ -1189,6 +1256,23 @@ async function renderSchedule() {
             </div>`).join('')}
         </div>
         <button class="btn-outline" data-action="add-reliever">+ Add Reliever</button>
+      </div>
+      <div class="manage-col">
+        <h4>Share Links</h4>
+        <div class="manage-list">
+          ${state.config.homes.map((h) => {
+            const link = state.shareLinks.find((l) => l.home_id === h.id && !l.revoked_at);
+            return `
+              <div class="manage-row share-row">
+                <div class="share-row-name">${esc(h.name)}</div>
+                ${link
+                  ? `<button class="btn-outline small" data-action="copy-share-link" data-token="${esc(link.token)}">📋 Copy Link</button>
+                     <button class="btn-remove" data-action="revoke-share-link" data-id="${link.id}">Revoke</button>`
+                  : `<button class="btn-outline small" data-action="create-share-link" data-home="${h.id}">🔗 Create Link</button>`}
+              </div>`;
+          }).join('')}
+        </div>
+        <p style="font-size:12px;">Read-only schedule for caregivers, no login needed.</p>
       </div>
     </div>` : '';
 
@@ -1300,6 +1384,10 @@ async function renderToday() {
   const relieverIds = state.config.relievers.map((r) => r.id);
   const homeMap = await fetchDaysForEntities('home', homeIds, todayStr, todayStr);
   const relieverMap = await fetchDaysForEntities('reliever', relieverIds, todayStr, todayStr);
+  // Requests can arrive from the public share page while this tab is open
+  // elsewhere, so re-fetch fresh on every render rather than relying on the
+  // cache loaded at login — same reasoning as the schedule data above.
+  await loadRequests();
 
   const shiftRows = state.config.homes.map((home) => {
     const cell = (homeMap[home.id] || {})[todayStr] || { working: '', day_off: '' };
@@ -1339,6 +1427,8 @@ async function renderToday() {
       ${relieverToday}
     </section>
 
+    ${renderRequestsCard()}
+
     <section class="card">
       <h3>Reminders</h3>
       <form data-form="reminder" class="inline-form">
@@ -1373,6 +1463,25 @@ function renderReminders() {
       </div>
       <button class="btn-remove" data-action="reminder-delete" data-id="${r.id}">✕</button>
     </div>`).join('');
+}
+
+function renderRequestsCard() {
+  const open = state.requests.filter((r) => r.status === 'open');
+  if (!open.length) return '';
+  return `
+    <section class="card">
+      <h3>Requests (${open.length})</h3>
+      <div class="list">
+        ${open.map((r) => `
+          <div class="request-item">
+            <div class="request-item-body">
+              <div class="request-item-title">${esc(r.staff_name)} — ${esc(r.home_name)}${r.request_date ? ` · ${esc(r.request_date)}` : ''}</div>
+              <div class="request-item-note">${esc(r.note)}</div>
+            </div>
+            <button class="btn-outline small" data-action="request-handled" data-id="${r.id}">Mark Handled</button>
+          </div>`).join('')}
+      </div>
+    </section>`;
 }
 
 function nextBirthdayDiff(month, day, now) {
@@ -1554,6 +1663,18 @@ function onGlobalClick(e) {
       break;
     case 'toggle-theme':
       toggleTheme();
+      break;
+    case 'create-share-link':
+      createShareLink(btn.dataset.home);
+      break;
+    case 'copy-share-link':
+      copyShareLink(btn.dataset.token);
+      break;
+    case 'revoke-share-link':
+      revokeShareLink(btn.dataset.id);
+      break;
+    case 'request-handled':
+      markRequestHandled(btn.dataset.id);
       break;
   }
 }

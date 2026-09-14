@@ -4,8 +4,9 @@
 from the Tello AI advisor (`tello.html` / `tello-runp8`): this app is for
 day-to-day scheduling and shift operations.
 
-Static site plus one Cloudflare Pages Function for the AI chat endpoint —
-no client-side build step, matching the other RunP8 apps.
+Static site plus a few Cloudflare Pages Functions for the AI chat endpoint
+and the public share pages — no client-side build step, matching the other
+RunP8 apps.
 
 ## Site structure
 
@@ -13,8 +14,14 @@ no client-side build step, matching the other RunP8 apps.
   marketing site (no login required). Shared styling in `/marketing.css`.
 - `/app/index.html` — the actual Tello Staff application (everything below).
   Sign-in links throughout the marketing site point at `/app/`.
+- `/share.html` — the public, unauthenticated per-home schedule page a
+  caregiver opens from a link the admin generates (see Share Links below).
 - `/functions/api/chat.js` — the Chat tab's backend, served at `/api/chat`
   regardless of which page calls it.
+- `/functions/api/share-data.js`, `/functions/api/share-request.js` — power
+  `/share.html`: validate the link token and read/write schedule data and
+  requests using the Supabase **service role** key (bypasses RLS), so the
+  rest of the database stays locked down to the signed-in admin only.
 
 ## What's built (in `/app/`)
 
@@ -37,6 +44,14 @@ no client-side build step, matching the other RunP8 apps.
 - **Staff** — a directory: add/edit/remove staff members (name, role, phone,
   assigned home, notes), all inline-editable. No logins or role-based access
   yet — same single-admin model as the rest of the app.
+- **Share Links** (Schedule Board → Manage) — generate a per-home, no-login
+  link to `/share.html` showing that home's current-week schedule and the
+  reliever pool read-only, plus a "Request a change" form. Revoke a link any
+  time to cut off access immediately. Submitted requests show up as a
+  **Requests** card on Today's Board (re-fetched fresh on every visit, so a
+  request submitted while you're mid-session still shows up), with a
+  one-click "Mark Handled" — approving a request doesn't touch the Schedule
+  Board automatically, you still go update the shift yourself.
 - Bottom nav: **Schedule**, **Today**, **Staff**, **Chat**.
 - Auth: Supabase email/password sign in, sign up, and password reset.
 - Light/dark background toggle (☀️/🌙 button, top right) — defaults to the
@@ -46,15 +61,21 @@ no client-side build step, matching the other RunP8 apps.
 
 ### 1. Database (Supabase project `nwlhsshvqmbhemhxcran`)
 
-Paste `schema.sql` into the Supabase SQL editor and run it. It creates six
+Paste `schema.sql` into the Supabase SQL editor and run it. It creates eight
 tables (`tello_staff_config`, `tello_staff_schedule_days`,
 `tello_staff_reminders`, `tello_staff_birthdays`, `tello_staff_chat_messages`,
-`tello_staff_members`), each with RLS scoped to `auth.uid()`, and is safe to
-re-run. If you ran an
+`tello_staff_members`, `tello_staff_share_links`, `tello_staff_requests`),
+each with RLS scoped to `auth.uid()`, and is safe to re-run. If you ran an
 earlier version of this schema, `tello_staff_schedule_days` (day-by-day) is
 new and replaces the old `tello_staff_schedule` (one JSONB blob per week) —
 the script leaves the old table alone since it doesn't know whether it holds
 data you still want; drop it yourself once you've checked.
+
+Note: `tello_staff_share_links` and `tello_staff_requests` intentionally have
+**no public RLS policy** — only the owning admin can read/write them directly.
+The public share page never talks to Supabase directly; it goes through the
+Functions below, which use the service role key to bypass RLS in a
+controlled way (token-checked, not identity-checked).
 
 ### 2. Fill in the anon key
 
@@ -80,7 +101,27 @@ constant at the top of `functions/api/chat.js` to `claude-sonnet-5` or
 `claude-haiku-4-5` for a cheaper/faster tier if Opus-level reasoning isn't
 needed for day-to-day coverage questions.
 
-### 4. Cloudflare Pages
+### 4. Supabase service role key (for share links)
+
+`functions/api/share-data.js` and `functions/api/share-request.js` need
+Supabase's **service role** key to serve the public `/share.html` page
+without a login. In Cloudflare Pages → Settings → Environment variables →
+Production, add:
+
+```
+SUPABASE_SERVICE_ROLE_KEY = eyJ...     (type: Secret / Encrypted)
+```
+
+Get it from Supabase → Project Settings → API → **service_role** secret key
+(a different key from the anon key already in `app/index.html` — the service
+role key bypasses row-level security entirely, so treat it like a master
+password: Cloudflare Secret only, never in client-side code, never
+committed). Without this var set, share links will 500 with a clear
+"not configured on the server" error rather than failing silently — Share
+Links can be created in the app regardless, they just won't resolve until
+this is set.
+
+### 5. Cloudflare Pages
 
 - Project: `carehome-application-form`, deployed at
   `https://carehome-application-form.pages.dev`.

@@ -74,12 +74,45 @@ create table if not exists tello_staff_members (
   updated_at timestamptz not null default now()
 );
 
+-- Per-home shareable links (read-only schedule view, no caregiver login).
+-- Deliberately no public RLS policy here — the public share page reads
+-- through functions/api/share-data.js using the Supabase service role key,
+-- which bypasses RLS entirely server-side. Anon/authenticated clients get
+-- no special access to this table beyond their own rows.
+create table if not exists tello_staff_share_links (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  home_id text not null,
+  token text not null unique,
+  created_at timestamptz not null default now(),
+  revoked_at timestamptz
+);
+create index if not exists tello_staff_share_links_token on tello_staff_share_links (token);
+
+-- Change requests submitted from a share page. home_name/staff_name are
+-- denormalized snapshots (not FKs) since the public submitter has no
+-- session to look anything up with — same reasoning as above, submission
+-- goes through functions/api/share-request.js with the service role key.
+create table if not exists tello_staff_requests (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  home_id text not null,
+  home_name text not null,
+  staff_name text not null,
+  request_date date,
+  note text not null,
+  status text not null default 'open' check (status in ('open', 'handled')),
+  created_at timestamptz not null default now()
+);
+
 alter table tello_staff_config enable row level security;
 alter table tello_staff_schedule_days enable row level security;
 alter table tello_staff_reminders enable row level security;
 alter table tello_staff_birthdays enable row level security;
 alter table tello_staff_chat_messages enable row level security;
 alter table tello_staff_members enable row level security;
+alter table tello_staff_share_links enable row level security;
+alter table tello_staff_requests enable row level security;
 
 drop policy if exists "own config" on tello_staff_config;
 create policy "own config" on tello_staff_config
@@ -103,6 +136,14 @@ create policy "own chat messages" on tello_staff_chat_messages
 
 drop policy if exists "own staff members" on tello_staff_members;
 create policy "own staff members" on tello_staff_members
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "own share links" on tello_staff_share_links;
+create policy "own share links" on tello_staff_share_links
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "own requests" on tello_staff_requests;
+create policy "own requests" on tello_staff_requests
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 select
