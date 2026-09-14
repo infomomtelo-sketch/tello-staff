@@ -43,7 +43,17 @@ RunP8 apps.
   message). Conversation history persists in Supabase.
 - **Staff** — a directory: add/edit/remove staff members (name, role, phone,
   assigned home, notes), all inline-editable. No logins or role-based access
-  yet — same single-admin model as the rest of the app.
+  yet — same single-admin model as the rest of the app. Assigning a home to a
+  staff member only sets a directory reference; it does not put them on the
+  schedule automatically (the Schedule Board is deliberately free text — see
+  next bullet for how the two connect).
+- **Schedule Board ↔ Staff directory link** — the Schedule Board shows a
+  "Staff assigned to this home" chip strip (pulled from the Staff tab's
+  per-person home field) above the grid. Click into a Working box, then tap
+  a chip to append that name — still plain text under the hood, just saves
+  retyping. The two systems otherwise stay independent by design (the
+  schedule accepts anyone, typed exactly as needed, not only directory
+  names).
 - **Share Links** (Schedule Board → Manage) — generate a per-home, no-login
   link to `/share.html` showing that home's current-week schedule and the
   reliever pool read-only, plus a "Request a change" form. Revoke a link any

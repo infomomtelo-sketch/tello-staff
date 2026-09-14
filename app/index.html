@@ -308,6 +308,29 @@
   }
   .view-toggle button.active { background: var(--accent); color: var(--accent-contrast); }
   .week-label { font-weight: 700; font-size: 15px; flex: 1; text-align: center; min-width: 160px; }
+  .assigned-staff-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .assigned-staff-label { font-size: 12px; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+  .staff-chip {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .staff-chip:hover { border-color: var(--accent); color: var(--accent); }
   .section-title { margin-top: 28px; margin-bottom: 12px; font-size: 16px; }
 
   .manage-panel {
@@ -1191,6 +1214,7 @@ async function renderSchedule() {
   }
   const home = state.config.homes.find((h) => h.id === state.selectedHomeId) || null;
   const todayStr = toISODate(new Date());
+  const assignedStaff = home ? state.staff.filter((s) => s.home_id === home.id) : [];
 
   let periodLabel = '';
   let gridHtml = `<div class="muted">Add a home in Manage to start scheduling.</div>`;
@@ -1297,6 +1321,13 @@ async function renderSchedule() {
       <h2>${esc(home ? home.name : 'Tello Staff')}</h2>
       <div>${periodLabel}</div>
     </div>
+    ${home ? `
+      <div class="assigned-staff-strip no-print">
+        <span class="assigned-staff-label">Staff assigned to ${esc(home.name)}:</span>
+        ${assignedStaff.length
+          ? assignedStaff.map((s) => `<button type="button" class="staff-chip" data-action="insert-staff-name" data-name="${esc(s.name)}">${esc(s.name)}</button>`).join('')
+          : `<span class="muted">None yet — assign staff to this home in the Staff tab.</span>`}
+      </div>` : ''}
     ${gridHtml}
     <h3 class="section-title">Reliever Pool — This Week</h3>
     <div class="grid-wrap no-print">
@@ -1372,6 +1403,23 @@ function renderRelieverWeekRow(reliever, days, relieverDayMap) {
         return `<td><input type="text" class="day-input" data-entity="reliever" data-entity-id="${reliever.id}" data-date="${dateStr}" data-field="working" value="${esc(val)}" placeholder="—" /></td>`;
       }).join('')}
     </tr>`;
+}
+
+// Adds a name to whichever Working box was last focused, so tapping a chip
+// from the "Staff assigned to this home" strip fills in a shift without
+// retyping — this is the only link between the Staff directory and the
+// Schedule Board, which are otherwise fully independent by design.
+let lastFocusedWorkingInput = null;
+function insertStaffNameIntoFocusedCell(name) {
+  const target = lastFocusedWorkingInput;
+  if (!target || !document.body.contains(target)) {
+    window.alert('Click into a "Working" box first, then tap a name to add it.');
+    return;
+  }
+  const sep = target.value.trim() ? '\n' : '';
+  target.value = target.value + sep + name;
+  target.dispatchEvent(new Event('input', { bubbles: true }));
+  target.focus();
 }
 
 // ---------------------------------------------------------------------------
@@ -1676,6 +1724,9 @@ function onGlobalClick(e) {
     case 'request-handled':
       markRequestHandled(btn.dataset.id);
       break;
+    case 'insert-staff-name':
+      insertStaffNameIntoFocusedCell(btn.dataset.name);
+      break;
   }
 }
 
@@ -1777,6 +1828,11 @@ function init() {
   document.addEventListener('submit', onGlobalSubmit);
   document.addEventListener('input', onGlobalInput);
   document.addEventListener('change', onGlobalChange);
+  document.addEventListener('focusin', (e) => {
+    if (e.target.classList.contains('day-input') && e.target.dataset.field === 'working') {
+      lastFocusedWorkingInput = e.target;
+    }
+  });
 
   initTheme();
 
