@@ -56,12 +56,20 @@ RunP8 apps.
   names).
 - **Share Links** (Schedule Board → Manage) — generate a per-home, no-login
   link to `/share.html` showing that home's current-week schedule and the
-  reliever pool read-only, plus a "Request a change" form. Revoke a link any
-  time to cut off access immediately. Submitted requests show up as a
-  **Requests** card on Today's Board (re-fetched fresh on every visit, so a
-  request submitted while you're mid-session still shows up), with a
-  one-click "Mark Handled" — approving a request doesn't touch the Schedule
-  Board automatically, you still go update the shift yourself.
+  reliever pool read-only, plus a "Request a change" form (the form shows
+  the days-off policy up front: requests due by the end of the month
+  *before* the time off, e.g. a November day off by October 31). Revoke a
+  link any time to cut off access immediately. Submitted requests show up
+  as a **Requests** card on Today's Board (re-fetched fresh on every visit,
+  so a request submitted while you're mid-session still shows up) — a date-
+  specific request submitted past that deadline gets a **Late** badge — with
+  a one-click "Mark Handled." Approving doesn't touch the Schedule Board
+  automatically, you still go update the shift yourself.
+- **Chat knows the staffing pattern** — Tello's context now includes that
+  each home runs two main caregivers with a reliever normally covering
+  about two days when one is off, and the days-off deadline policy, so its
+  coverage suggestions and answers about request timing match how staffing
+  actually works here rather than generic assumptions.
 - Bottom nav: **Schedule**, **Today**, **Staff**, **Chat**.
 - Auth: Supabase email/password sign in, sign up, and password reset.
 - Light/dark background toggle (☀️/🌙 button, top right) — defaults to the

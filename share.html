@@ -125,6 +125,11 @@ function renderSchedule(data) {
     <div class="request-card">
       <h2>Request a change</h2>
       <p>Need a day off, or want to flag something about this schedule? Send a note — the admin will see it and follow up.</p>
+      <div class="legal-notice" style="margin-bottom:18px;">
+        <strong>Days-off deadline:</strong> requests must be received by the end of
+        the month <em>before</em> the time off — e.g. a day off in November needs to
+        be requested by October 31. Requests sent after that may not be guaranteed.
+      </div>
       <form id="requestForm" class="request-form">
         <input type="text" name="staffName" placeholder="Your name" required maxlength="200" />
         <input type="date" name="requestDate" />

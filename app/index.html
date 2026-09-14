@@ -473,6 +473,19 @@
   .request-item-body { flex: 1; }
   .request-item-title { font-weight: 600; font-size: 14px; }
   .request-item-note { color: var(--text-muted); font-size: 13px; margin-top: 3px; white-space: pre-wrap; }
+  .late-badge {
+    display: inline-block;
+    background: var(--danger-bg);
+    color: var(--danger-text);
+    border: 1px solid var(--danger);
+    border-radius: 999px;
+    padding: 1px 9px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+  }
   .reminder-item.done .reminder-title { text-decoration: line-through; color: var(--text-muted); }
   .reminder-body { flex: 1; }
   .reminder-title { font-weight: 600; font-size: 14px; }
@@ -1513,6 +1526,18 @@ function renderReminders() {
     </div>`).join('');
 }
 
+// The policy is "day off requests must arrive by end of the month before
+// the time off" — e.g. a November day off is due by Oct 31. That deadline
+// is the first instant of the requested month, so submitting on or after
+// that instant is late. Only checked when a specific date was given; a
+// dateless note (general flag, short-notice cover ask) isn't held to it.
+function isRequestLate(requestDateStr, createdAtStr) {
+  if (!requestDateStr) return false;
+  const [y, m] = requestDateStr.split('-').map(Number);
+  const deadline = new Date(y, m - 1, 1);
+  return new Date(createdAtStr) >= deadline;
+}
+
 function renderRequestsCard() {
   const open = state.requests.filter((r) => r.status === 'open');
   if (!open.length) return '';
@@ -1520,14 +1545,17 @@ function renderRequestsCard() {
     <section class="card">
       <h3>Requests (${open.length})</h3>
       <div class="list">
-        ${open.map((r) => `
+        ${open.map((r) => {
+          const late = isRequestLate(r.request_date, r.created_at);
+          return `
           <div class="request-item">
             <div class="request-item-body">
-              <div class="request-item-title">${esc(r.staff_name)} — ${esc(r.home_name)}${r.request_date ? ` · ${esc(r.request_date)}` : ''}</div>
+              <div class="request-item-title">${esc(r.staff_name)} — ${esc(r.home_name)}${r.request_date ? ` · ${esc(r.request_date)}` : ''}${late ? ' <span class="late-badge">Late</span>' : ''}</div>
               <div class="request-item-note">${esc(r.note)}</div>
             </div>
             <button class="btn-outline small" data-action="request-handled" data-id="${r.id}">Mark Handled</button>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </div>
     </section>`;
 }
