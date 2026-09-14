@@ -33,6 +33,16 @@ RunP8 apps.
   Month view (Sunday-first, like a wall calendar) for the printable page that
   actually goes up on the board. An 11-slot reliever pool floats alongside it
   as its own always-current-week grid.
+- **All Homes view** (third toggle on the Schedule Board, next to Week/Month)
+  — a master roster for one date: every home listed with its Working and Day
+  Off boxes in a single screen, so the admin can fill a whole day across all
+  homes in one pass instead of switching homes one at a time. Step forward/
+  back a day with ‹ ›, or jump back to today. Same underlying
+  `tello_staff_schedule_days` rows as the per-home Week/Month grids — nothing
+  typed here is separate data, it just shows up immediately when you switch
+  back to that home's own Week or Month view. Mirrors the paper workflow of
+  keeping one "Relievers Monthly Schedule" master sheet that per-home printed
+  pages get filtered from.
 - **Today's Board** — today's date, a rotating caregiver quote-of-the-day
   (same quote all day, changes at midnight, no setup needed), admin-added
   reminder cards (title, note, due time), manually-entered staff birthdays,

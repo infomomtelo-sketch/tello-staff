@@ -424,6 +424,10 @@
   .month-working-input { height: 46px; }
   .month-dayoff-input { height: 26px; border-top: 1px dashed var(--border) !important; }
 
+  /* All Homes (master roster) view — every home for one date */
+  .all-homes-grid th.row-head { min-width: 130px; }
+  .all-homes-input { height: 56px; }
+
   /* ---------- Today view ---------- */
   .today-date { font-size: 20px; font-weight: 800; margin-bottom: 16px; }
   .quote-card {
@@ -673,6 +677,7 @@ const state = {
   scheduleView: 'week',
   weekOffset: 0,
   monthOffset: 0,
+  dayOffset: 0,
   selectedHomeId: null,
   manageOpen: false,
   reminders: [],
@@ -1232,7 +1237,16 @@ async function renderSchedule() {
   let periodLabel = '';
   let gridHtml = `<div class="muted">Add a home in Manage to start scheduling.</div>`;
 
-  if (home) {
+  if (state.scheduleView === 'day') {
+    if (state.config.homes.length) {
+      const date = addDays(new Date(), state.dayOffset);
+      const dateStr = toISODate(date);
+      periodLabel = fmtLong(date);
+      const homeIds = state.config.homes.map((h) => h.id);
+      const allHomesMap = await fetchDaysForEntities('home', homeIds, dateStr, dateStr);
+      gridHtml = renderAllHomesTable(state.config.homes, allHomesMap, dateStr);
+    }
+  } else if (home) {
     if (state.scheduleView === 'week') {
       const ws = weekStartForOffset(state.weekOffset);
       const days = DAY_KEYS.map((k, i) => ({ key: k, label: DAY_LABELS[i], date: addDays(ws, i) }));
@@ -1315,12 +1329,14 @@ async function renderSchedule() {
 
   document.getElementById('view-schedule').innerHTML = `
     <div class="week-bar no-print">
-      <select class="home-select" data-kind="select-home">
-        ${state.config.homes.map((h) => `<option value="${h.id}" ${h.id === state.selectedHomeId ? 'selected' : ''}>${esc(h.name)}</option>`).join('')}
-      </select>
+      ${state.scheduleView !== 'day' ? `
+        <select class="home-select" data-kind="select-home">
+          ${state.config.homes.map((h) => `<option value="${h.id}" ${h.id === state.selectedHomeId ? 'selected' : ''}>${esc(h.name)}</option>`).join('')}
+        </select>` : ''}
       <div class="view-toggle">
         <button data-action="view-week" class="${state.scheduleView === 'week' ? 'active' : ''}">Week</button>
         <button data-action="view-month" class="${state.scheduleView === 'month' ? 'active' : ''}">Month</button>
+        <button data-action="view-day" class="${state.scheduleView === 'day' ? 'active' : ''}">All Homes</button>
       </div>
       <button class="btn-icon" data-action="prev-period" title="Previous">‹</button>
       <div class="week-label">${periodLabel}</div>
@@ -1331,10 +1347,10 @@ async function renderSchedule() {
     </div>
     ${managePanel}
     <div class="print-only print-title">
-      <h2>${esc(home ? home.name : 'Tello Staff')}</h2>
+      <h2>${esc(state.scheduleView === 'day' ? 'All Homes' : (home ? home.name : 'Tello Staff'))}</h2>
       <div>${periodLabel}</div>
     </div>
-    ${home ? `
+    ${(home && state.scheduleView !== 'day') ? `
       <div class="assigned-staff-strip no-print">
         <span class="assigned-staff-label">Staff assigned to ${esc(home.name)}:</span>
         ${assignedStaff.length
@@ -1402,6 +1418,30 @@ function renderHomeMonthTable(weeks, homeMap, todayStr, homeId) {
       <table class="month-grid" id="homeMonthTable">
         <thead><tr>${headerCells}</tr></thead>
         <tbody>${bodyRows}</tbody>
+      </table>
+    </div>`;
+}
+
+// Master roster view: every home for one date, so the admin can fill the
+// whole day in one pass instead of switching homes one at a time (matches
+// the "Relievers Monthly Schedule" master sheet the real paper workflow
+// uses before it gets split into per-home printed pages).
+function renderAllHomesTable(homes, allHomesMap, dateStr) {
+  const rows = homes.map((h) => {
+    const cell = (allHomesMap[h.id] || {})[dateStr] || { working: '', day_off: '' };
+    return `
+      <tr>
+        <th class="row-head">${esc(h.name)}</th>
+        <td><textarea class="day-input all-homes-input" data-entity="home" data-entity-id="${h.id}" data-date="${dateStr}" data-field="working" placeholder="—">${esc(cell.working)}</textarea></td>
+        <td><textarea class="day-input all-homes-input" data-entity="home" data-entity-id="${h.id}" data-date="${dateStr}" data-field="day_off" placeholder="—">${esc(cell.day_off)}</textarea></td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div class="grid-wrap">
+      <table class="schedule-grid all-homes-grid" id="allHomesTable">
+        <thead><tr><th class="row-head">Home</th><th>Working</th><th>Day Off</th></tr></thead>
+        <tbody>${rows}</tbody>
       </table>
     </div>`;
 }
@@ -1679,16 +1719,26 @@ function onGlobalClick(e) {
       state.scheduleView = 'month';
       renderSchedule();
       break;
+    case 'view-day':
+      state.scheduleView = 'day';
+      renderSchedule();
+      break;
     case 'prev-period':
-      if (state.scheduleView === 'week') state.weekOffset -= 1; else state.monthOffset -= 1;
+      if (state.scheduleView === 'week') state.weekOffset -= 1;
+      else if (state.scheduleView === 'month') state.monthOffset -= 1;
+      else state.dayOffset -= 1;
       renderSchedule();
       break;
     case 'next-period':
-      if (state.scheduleView === 'week') state.weekOffset += 1; else state.monthOffset += 1;
+      if (state.scheduleView === 'week') state.weekOffset += 1;
+      else if (state.scheduleView === 'month') state.monthOffset += 1;
+      else state.dayOffset += 1;
       renderSchedule();
       break;
     case 'today-period':
-      if (state.scheduleView === 'week') state.weekOffset = 0; else state.monthOffset = 0;
+      if (state.scheduleView === 'week') state.weekOffset = 0;
+      else if (state.scheduleView === 'month') state.monthOffset = 0;
+      else state.dayOffset = 0;
       renderSchedule();
       break;
     case 'manage-toggle':
