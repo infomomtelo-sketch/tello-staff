@@ -33,6 +33,18 @@ RunP8 apps.
   Month view (Sunday-first, like a wall calendar) for the printable page that
   actually goes up on the board. An 11-slot reliever pool floats alongside it
   as its own always-current-week grid.
+- **Optional shift times** — still the same free-text box, nothing new to
+  learn or fill in: type a time after a name (e.g. "Peter, 7am-3pm" or
+  "Divina 15:00-23:00") and it's recognized as an actual shift time rather
+  than just more text. A name with no time still works exactly as before
+  (including the existing "Manpreet (N)" / "Nelia (T)" style notes — those
+  aren't mistaken for times). Saved alongside the raw text as structured
+  `working_shifts` data (one `{name, start, end}` per line), so Chat can
+  answer a "what time does X work" question correctly, and both "Ask Tello
+  to Fill" features carry a person's usual time forward if their history
+  shows one consistently. This is prep work for a later personal per-staff
+  link ("where and what time do I work today") — not built yet, but this is
+  the foundation it needs.
 - **All Homes view** (third toggle on the Schedule Board, next to Week/Month)
   — a master roster for one date: every home listed with its Working and Day
   Off boxes in a single screen, so the admin can fill a whole day across all
@@ -130,7 +142,9 @@ each with RLS scoped to `auth.uid()`, and is safe to re-run. If you ran an
 earlier version of this schema, `tello_staff_schedule_days` (day-by-day) is
 new and replaces the old `tello_staff_schedule` (one JSONB blob per week) —
 the script leaves the old table alone since it doesn't know whether it holds
-data you still want; drop it yourself once you've checked.
+data you still want; drop it yourself once you've checked. If you ran the
+schema before `working_shifts` existed, re-running it now adds that column
+in place via `alter table ... add column if not exists` — no data loss.
 
 Note: `tello_staff_share_links` and `tello_staff_requests` intentionally have
 **no public RLS policy** — only the owning admin can read/write them directly.

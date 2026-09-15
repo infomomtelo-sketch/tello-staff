@@ -27,11 +27,19 @@ create table if not exists tello_staff_schedule_days (
   date date not null,
   working text not null default '',
   day_off text not null default '',
+  -- Derived from "working" every time it's saved, never typed directly: one
+  -- {name, start, end} object per line, start/end null when that line had no
+  -- recognizable time (e.g. "Manpreet (N)"). The Working box itself is still
+  -- plain free text — this just gives anything that needs an actual time
+  -- (Chat, a future personal per-staff link) something structured to read.
+  working_shifts jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now(),
   unique (user_id, entity_kind, entity_id, date)
 );
 create index if not exists tello_staff_schedule_days_lookup
   on tello_staff_schedule_days (user_id, entity_kind, entity_id, date);
+-- Re-running this script on a database created before working_shifts existed:
+alter table tello_staff_schedule_days add column if not exists working_shifts jsonb not null default '[]'::jsonb;
 
 create table if not exists tello_staff_reminders (
   id uuid primary key default gen_random_uuid(),

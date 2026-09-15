@@ -957,6 +957,41 @@ async function fetchDaysForEntities(entityKind, entityIds, startStr, endStr) {
   return map;
 }
 
+// Optional inline time convention: a Working line like "Peter, 7am-3pm" or
+// "Divina 15:00-23:00" is still just free text — nothing about the box
+// changes, she keeps typing a whole month the same way she always has — but
+// when a line matches this pattern we also derive a {name, start, end}
+// triple alongside the raw text, stored in working_shifts. That gives
+// anything that needs an actual time (Chat, and eventually a personal
+// per-staff link) something structured to read without forcing a time into
+// every line: a line with no match (e.g. "Manpreet (N)", a name with no
+// time) just gets start/end of null and displays exactly as typed.
+const SHIFT_TIME_TOKEN = '(?:\\d{1,2}:\\d{2}\\s*(?:am|pm)?|\\d{1,2}\\s*(?:am|pm))';
+const SHIFT_TIME_PATTERN = new RegExp(`(${SHIFT_TIME_TOKEN})\\s*(?:-|–|to)\\s*(${SHIFT_TIME_TOKEN})`, 'i');
+
+function parseWorkingLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(SHIFT_TIME_PATTERN);
+  if (!match) return { name: trimmed, start: null, end: null };
+  const name = trimmed.slice(0, match.index).replace(/[,\s-]+$/, '').trim();
+  return { name: name || trimmed, start: match[1].trim(), end: match[2].trim() };
+}
+
+function computeWorkingShifts(workingText) {
+  return String(workingText || '').split('\n').map(parseWorkingLine).filter(Boolean);
+}
+
+// One-line, comma-joined rendering for context sent to Claude: a parsed
+// time rides along in parentheses, a line with none just shows the name as
+// typed — so Chat can answer "what time is X working" without a schema
+// lookup, derived fresh from the same text every time.
+function formatWorkingWithTimes(workingText) {
+  return computeWorkingShifts(workingText)
+    .map((s) => (s.start && s.end ? `${s.name} (${s.start}–${s.end})` : s.name))
+    .join(', ');
+}
+
 // The DOM inputs are the live source of truth while typing (no in-memory
 // mirror needed) — on save we read both sibling fields for the same
 // entity/date so editing one never clobbers the other.
@@ -976,13 +1011,15 @@ function dayFieldEl(entity, entityId, dateStr, field) {
 async function saveDay(entity, entityId, dateStr) {
   const workingEl = dayFieldEl(entity, entityId, dateStr, 'working');
   const dayOffEl = dayFieldEl(entity, entityId, dateStr, 'day_off');
+  const workingText = workingEl ? workingEl.value : '';
   const { error } = await sb.from('tello_staff_schedule_days').upsert({
     user_id: state.user.id,
     entity_kind: entity,
     entity_id: entityId,
     date: dateStr,
-    working: workingEl ? workingEl.value : '',
+    working: workingText,
     day_off: dayOffEl ? dayOffEl.value : '',
+    working_shifts: computeWorkingShifts(workingText),
     updated_at: new Date().toISOString(),
   }, { onConflict: 'user_id,entity_kind,entity_id,date' });
   if (error) console.error(error);
@@ -1013,7 +1050,7 @@ async function buildDaySuggestionContext(dateStr) {
     for (let d = new Date(histStart); d <= histEnd; d = addDays(d, 1)) {
       const dStr = toISODate(d);
       const cell = hd[dStr] || { working: '', day_off: '' };
-      const working = cell.working.replace(/\n/g, ', ').trim();
+      const working = formatWorkingWithTimes(cell.working);
       const dayOff = cell.day_off.replace(/\n/g, ', ').trim();
       const wd = d.toLocaleDateString('en-US', { weekday: 'short' });
       lines.push(`  ${wd} ${fmtShort(d)} — Working: ${working || '(none logged)'}${dayOff ? ` | Day off: ${dayOff}` : ''}`);
@@ -1139,7 +1176,7 @@ async function buildMonthSuggestionContext(home, monthStart) {
   for (let d = new Date(histStart); d <= histEnd; d = addDays(d, 1)) {
     const dStr = toISODate(d);
     const cell = homeMap[dStr] || { working: '', day_off: '' };
-    const working = cell.working.replace(/\n/g, ', ').trim();
+    const working = formatWorkingWithTimes(cell.working);
     const dayOff = cell.day_off.replace(/\n/g, ', ').trim();
     const wd = d.toLocaleDateString('en-US', { weekday: 'short' });
     lines.push(`  ${wd} ${fmtShort(d)} — Working: ${working || '(none logged)'}${dayOff ? ` | Day off: ${dayOff}` : ''}`);
@@ -1228,6 +1265,7 @@ async function requestMonthFill(monthDate) {
           date: entry.date,
           working,
           day_off: dayOff,
+          working_shifts: computeWorkingShifts(working),
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id,entity_kind,entity_id,date' });
         if (error) { console.error(error); continue; }
@@ -1267,6 +1305,7 @@ async function undoMonthFill() {
       date,
       working: '',
       day_off: '',
+      working_shifts: [],
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id,entity_kind,entity_id,date' });
     if (error) console.error(error);
@@ -1371,14 +1410,15 @@ async function buildScheduleContext() {
   lines.push(`Today is ${fmtLong(now)}.`);
   lines.push(`This week runs ${fmtShort(ws)} to ${fmtShort(addDays(ws, 6))}.`);
   lines.push('');
-  lines.push('HOMES THIS WEEK ((empty) means nobody scheduled):');
+  lines.push('HOMES THIS WEEK ((empty) means nobody scheduled; a name followed by a time in');
+  lines.push('parentheses is that person\'s actual shift hours, when she typed one in):');
   state.config.homes.forEach((home) => {
     const hd = homeMap[home.id] || {};
     lines.push(`${home.name}:`);
     days.forEach((d) => {
       const dateStr = toISODate(d.date);
       const cell = hd[dateStr] || { working: '', day_off: '' };
-      const working = cell.working.replace(/\n/g, ', ').trim();
+      const working = formatWorkingWithTimes(cell.working);
       const dayOff = cell.day_off.replace(/\n/g, ', ').trim();
       lines.push(`  ${d.label} ${fmtShort(d.date)} — Working: ${working || '(none)'}${dayOff ? ` | Day off: ${dayOff}` : ''}`);
     });
@@ -1686,6 +1726,7 @@ async function renderSchedule() {
           ? assignedStaff.map((s) => `<button type="button" class="staff-chip" data-action="insert-staff-name" data-name="${esc(s.name)}">${esc(s.name)}</button>`).join('')
           : `<span class="muted">None yet — assign staff to this home in the Staff tab.</span>`}
       </div>` : ''}
+    <div class="muted no-print" style="margin-bottom:14px;">Tip: add a time after a name for shift hours — e.g. "Peter, 7am-3pm" — totally optional, plain names still work exactly as before.</div>
     ${suggestBarHtml()}
     ${monthFillBarHtml()}
     ${gridHtml}

@@ -20,6 +20,12 @@ This home normally runs two main caregivers. When one of them is off, a reliever
 about two days — that's the typical pattern, not a hard rule. Use it, and whatever weekday each day off
 tends to repeat on, to project a believable rotation across the whole month.
 
+A name in the history may be followed by a time in parentheses, like "Peter (7am–3pm)" — that's an
+actual shift time she typed in, not decoration. If someone's history consistently shows the same shift
+time, carry it forward in your own answer using the exact same convention typed inline after their name
+(e.g. "Peter, 7am-3pm") rather than dropping it; if a name has no time in the history, just write the
+name with no time attached — don't invent one.
+
 Using ONLY names that already appear in the history or the staff directory given to you — never invent
 a name — fill in Working and Day Off for every date you're given in the target month, except the ones
 already marked as filled. If the history is too thin to guess confidently for a stretch of days, leave
