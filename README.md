@@ -43,6 +43,21 @@ RunP8 apps.
   back to that home's own Week or Month view. Mirrors the paper workflow of
   keeping one "Relievers Monthly Schedule" master sheet that per-home printed
   pages get filtered from.
+- **"✨ Ask Tello to Fill This Day"** (All Homes view) — one tap asks Tello to
+  guess the whole day's roster from the last 3 weeks of that home's history
+  (who's usually paired, who's normally off that weekday) plus the Staff
+  directory, so she isn't retyping the same names into every box every day.
+  It only fills boxes that are still blank — anything already typed for that
+  date is left alone and reported as skipped — and only uses names it's
+  actually seen, leaving a home blank rather than guessing when the history's
+  too thin. Filled boxes get a gold outline and a one-line "why" note per
+  home so she can sanity-check the pick at a glance; a filled box loses the
+  outline the moment she clicks into it. One "↩ Undo Tello's Fill" clears
+  exactly what that suggestion filled (never anything typed since) — it goes
+  away when you navigate to a different date. Saves through the exact same
+  path as typing it by hand, so it's not a separate "pending" state sitting
+  outside the database. Backed by a new `/api/suggest-day` Function, same
+  pattern and same `ANTHROPIC_API_KEY` as Chat.
 - **Today's Board** — today's date, a rotating caregiver quote-of-the-day
   (same quote all day, changes at midnight, no setup needed), admin-added
   reminder cards (title, note, due time), manually-entered staff birthdays,
@@ -111,10 +126,11 @@ Open `app/index.html` and set `SUPABASE_ANON_KEY` (Supabase → Project
 Settings → API → anon public key) — it ships with a placeholder that will
 not authenticate anyone until replaced.
 
-### 3. Anthropic API key (for Chat)
+### 3. Anthropic API key (for Chat and the "Ask Tello to Fill This Day" suggestion)
 
-`functions/api/chat.js` calls Claude server-side. In Cloudflare Pages →
-Settings → Environment variables → Production, add:
+`functions/api/chat.js` and `functions/api/suggest-day.js` both call Claude
+server-side. In Cloudflare Pages → Settings → Environment variables →
+Production, add:
 
 ```
 ANTHROPIC_API_KEY = sk-ant-...     (type: Secret / Encrypted)
@@ -122,12 +138,11 @@ ANTHROPIC_API_KEY = sk-ant-...     (type: Secret / Encrypted)
 
 **No prefix** — this must NOT be named `VITE_ANTHROPIC_API_KEY` or similar;
 a prefixed var would be a no-op here anyway since there's no build step to
-inline it, but keep the naming clean. Without this var set, the Chat tab
+inline it, but keep the naming clean. Without this var set, both features
 will show a clear "not configured on the server" error rather than failing
-silently. The function currently calls `claude-opus-5`; change the `MODEL`
-constant at the top of `functions/api/chat.js` to `claude-sonnet-5` or
-`claude-haiku-4-5` for a cheaper/faster tier if Opus-level reasoning isn't
-needed for day-to-day coverage questions.
+silently. Both functions currently call `claude-opus-5`; change the `MODEL`
+constant at the top of each file to `claude-sonnet-5` or `claude-haiku-4-5`
+for a cheaper/faster tier if Opus-level reasoning isn't needed.
 
 ### 4. Supabase service role key (for share links)
 

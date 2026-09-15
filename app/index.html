@@ -427,6 +427,21 @@
   /* All Homes (master roster) view — every home for one date */
   .all-homes-grid th.row-head { min-width: 130px; }
   .all-homes-input { height: 56px; }
+  .ai-suggested { outline: 2px solid var(--accent) !important; background: rgba(232, 193, 92, 0.10) !important; }
+
+  .suggest-bar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+  .suggest-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .suggest-note {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+  .suggest-note.error { border-left-color: var(--danger); color: var(--danger-text); }
+  .suggest-note ul { margin: 6px 0 0 18px; padding: 0; }
+  .suggest-note li { margin-bottom: 2px; }
 
   /* ---------- Today view ---------- */
   .today-date { font-size: 20px; font-weight: 800; margin-bottom: 16px; }
@@ -678,6 +693,9 @@ const state = {
   weekOffset: 0,
   monthOffset: 0,
   dayOffset: 0,
+  suggesting: false,
+  suggestionNote: null,
+  lastSuggestion: null,
   selectedHomeId: null,
   manageOpen: false,
   reminders: [],
@@ -736,6 +754,11 @@ function esc(str) {
 function toISODate(d) {
   const tz = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
   return tz.toISOString().slice(0, 10);
+}
+
+function parseISODate(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
 }
 
 function startOfWeek(date) {
@@ -954,6 +977,139 @@ async function saveDay(entity, entityId, dateStr) {
     updated_at: new Date().toISOString(),
   }, { onConflict: 'user_id,entity_kind,entity_id,date' });
   if (error) console.error(error);
+}
+
+// ---------------------------------------------------------------------------
+// Data — AI day-fill suggestion (All Homes view)
+// ---------------------------------------------------------------------------
+// Builds recent per-home history (3 weeks ending the day before the target
+// date) plus the staff directory, so Tello can infer each home's usual
+// pairing/rotation instead of guessing blind. Never includes the target date
+// itself — that's what we're asking it to fill in.
+async function buildDaySuggestionContext(dateStr) {
+  const target = parseISODate(dateStr);
+  const histEnd = addDays(target, -1);
+  const histStart = addDays(histEnd, -20);
+  const homeIds = state.config.homes.map((h) => h.id);
+  const homeMap = await fetchDaysForEntities('home', homeIds, toISODate(histStart), toISODate(histEnd));
+
+  const lines = [];
+  lines.push(`Target date is ${fmtLong(target)} (a ${target.toLocaleDateString('en-US', { weekday: 'long' })}).`);
+  lines.push(`History below runs ${fmtShort(histStart)} to ${fmtShort(histEnd)}, oldest to newest.`);
+  lines.push('');
+  lines.push('RECENT HISTORY PER HOME:');
+  state.config.homes.forEach((home) => {
+    const hd = homeMap[home.id] || {};
+    lines.push(`${home.name} (id: ${home.id}):`);
+    for (let d = new Date(histStart); d <= histEnd; d = addDays(d, 1)) {
+      const dStr = toISODate(d);
+      const cell = hd[dStr] || { working: '', day_off: '' };
+      const working = cell.working.replace(/\n/g, ', ').trim();
+      const dayOff = cell.day_off.replace(/\n/g, ', ').trim();
+      const wd = d.toLocaleDateString('en-US', { weekday: 'short' });
+      lines.push(`  ${wd} ${fmtShort(d)} — Working: ${working || '(none logged)'}${dayOff ? ` | Day off: ${dayOff}` : ''}`);
+    }
+  });
+  lines.push('');
+  lines.push('STAFF DIRECTORY:');
+  if (state.staff.length) {
+    state.staff.forEach((s) => {
+      const home = state.config.homes.find((h) => h.id === s.home_id);
+      lines.push(`  ${s.name}${s.role ? ` (${s.role})` : ''}${home ? ` — assigned to ${home.name}` : ' — unassigned'}`);
+    });
+  } else {
+    lines.push('  (no staff directory entries yet)');
+  }
+  return lines.join('\n');
+}
+
+// Asks Tello to guess Working/Day Off for every home on dateStr. Only fills
+// homes whose boxes are currently empty for that date — never overwrites
+// something the admin already typed — and writes through the normal
+// day-input/queueSaveDay path so a fill is saved exactly like a manual edit.
+// Deliberately does NOT call renderSchedule() afterwards: that would refetch
+// the grid from Supabase before the debounced save lands and repaint the
+// boxes back to blank, which would then make the pending save write blank
+// over the fill a moment later. Only the small suggest bar is touched.
+async function requestDaySuggestion(dateStr) {
+  if (state.suggesting) return;
+  state.suggesting = true;
+  state.suggestionNote = null;
+  updateSuggestBar();
+
+  try {
+    const homeIds = state.config.homes.map((h) => h.id);
+    const context = await buildDaySuggestionContext(dateStr);
+    const res = await fetch('/api/suggest-day', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: dateStr, homeIds, context }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+
+    let filledCount = 0;
+    let skippedCount = 0;
+    const filledHomeIds = [];
+    const details = [];
+
+    (data.suggestions || []).forEach((s) => {
+      const home = state.config.homes.find((h) => h.id === s.homeId);
+      if (!home) return;
+      const workingEl = dayFieldEl('home', s.homeId, dateStr, 'working');
+      const dayOffEl = dayFieldEl('home', s.homeId, dateStr, 'day_off');
+      if (!workingEl || !dayOffEl) return;
+      if (workingEl.value.trim() || dayOffEl.value.trim()) { skippedCount += 1; return; }
+      if (!s.working.trim() && !s.dayOff.trim()) return;
+      workingEl.value = s.working;
+      dayOffEl.value = s.dayOff;
+      workingEl.classList.add('ai-suggested');
+      dayOffEl.classList.add('ai-suggested');
+      workingEl.dispatchEvent(new Event('input', { bubbles: true }));
+      dayOffEl.dispatchEvent(new Event('input', { bubbles: true }));
+      filledCount += 1;
+      filledHomeIds.push(s.homeId);
+      if (s.note) details.push(`${home.name}: ${s.note}`);
+    });
+
+    state.lastSuggestion = filledHomeIds.length ? { dateStr, homeIds: filledHomeIds } : null;
+    const parts = [];
+    if (filledCount) parts.push(`Filled ${filledCount} home${filledCount === 1 ? '' : 's'}.`);
+    if (skippedCount) parts.push(`Skipped ${skippedCount} that already had entries.`);
+    if (!filledCount && !skippedCount) parts.push("Didn't have enough history to guess confidently yet — try again once a few more days are filled in.");
+    state.suggestionNote = { dateStr, summary: parts.join(' '), details };
+  } catch (err) {
+    state.suggestionNote = { dateStr, summary: `Could not reach Tello: ${err.message}`, details: [], isError: true };
+  } finally {
+    state.suggesting = false;
+    updateSuggestBar();
+  }
+}
+
+// Clears exactly the cells the last suggestion filled, saving blank through
+// the same path — never touches cells the admin has since typed over.
+function undoLastSuggestion() {
+  if (!state.lastSuggestion) return;
+  const { dateStr, homeIds } = state.lastSuggestion;
+  homeIds.forEach((homeId) => {
+    const workingEl = dayFieldEl('home', homeId, dateStr, 'working');
+    const dayOffEl = dayFieldEl('home', homeId, dateStr, 'day_off');
+    [workingEl, dayOffEl].forEach((el) => {
+      if (!el) return;
+      el.value = '';
+      el.classList.remove('ai-suggested');
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  });
+  state.lastSuggestion = null;
+  state.suggestionNote = null;
+  updateSuggestBar();
+}
+
+function clearSuggestionState() {
+  state.suggesting = false;
+  state.suggestionNote = null;
+  state.lastSuggestion = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1357,6 +1513,7 @@ async function renderSchedule() {
           ? assignedStaff.map((s) => `<button type="button" class="staff-chip" data-action="insert-staff-name" data-name="${esc(s.name)}">${esc(s.name)}</button>`).join('')
           : `<span class="muted">None yet — assign staff to this home in the Staff tab.</span>`}
       </div>` : ''}
+    ${suggestBarHtml()}
     ${gridHtml}
     <h3 class="section-title">Reliever Pool — This Week</h3>
     <div class="grid-wrap no-print">
@@ -1444,6 +1601,33 @@ function renderAllHomesTable(homes, allHomesMap, dateStr) {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+}
+
+// The suggest bar is rendered as part of renderSchedule()'s markup, but also
+// updated in place afterwards (thinking/done/error) without going through a
+// full renderSchedule() — see the comment on requestDaySuggestion for why.
+function suggestBarHtml() {
+  if (state.scheduleView !== 'day') return '';
+  const note = state.suggestionNote;
+  return `
+    <div id="suggestBar" class="suggest-bar no-print">
+      <div class="suggest-actions">
+        <button class="btn-outline" data-action="suggest-day" ${state.suggesting ? 'disabled' : ''}>
+          ${state.suggesting ? '✨ Thinking…' : '✨ Ask Tello to Fill This Day'}
+        </button>
+        ${state.lastSuggestion ? `<button class="btn-outline small" data-action="undo-suggestion">↩ Undo Tello's Fill</button>` : ''}
+      </div>
+      ${note ? `
+        <div class="suggest-note ${note.isError ? 'error' : ''}">
+          <div>${esc(note.summary)}</div>
+          ${note.details && note.details.length ? `<ul>${note.details.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>` : ''}
+        </div>` : ''}
+    </div>`;
+}
+
+function updateSuggestBar() {
+  const el = document.getElementById('suggestBar');
+  if (el) el.outerHTML = suggestBarHtml();
 }
 
 function renderRelieverWeekRow(reliever, days, relieverDayMap) {
@@ -1713,10 +1897,12 @@ function onGlobalClick(e) {
       break;
     case 'view-week':
       state.scheduleView = 'week';
+      clearSuggestionState();
       renderSchedule();
       break;
     case 'view-month':
       state.scheduleView = 'month';
+      clearSuggestionState();
       renderSchedule();
       break;
     case 'view-day':
@@ -1726,20 +1912,26 @@ function onGlobalClick(e) {
     case 'prev-period':
       if (state.scheduleView === 'week') state.weekOffset -= 1;
       else if (state.scheduleView === 'month') state.monthOffset -= 1;
-      else state.dayOffset -= 1;
+      else { state.dayOffset -= 1; clearSuggestionState(); }
       renderSchedule();
       break;
     case 'next-period':
       if (state.scheduleView === 'week') state.weekOffset += 1;
       else if (state.scheduleView === 'month') state.monthOffset += 1;
-      else state.dayOffset += 1;
+      else { state.dayOffset += 1; clearSuggestionState(); }
       renderSchedule();
       break;
     case 'today-period':
       if (state.scheduleView === 'week') state.weekOffset = 0;
       else if (state.scheduleView === 'month') state.monthOffset = 0;
-      else state.dayOffset = 0;
+      else { state.dayOffset = 0; clearSuggestionState(); }
       renderSchedule();
+      break;
+    case 'suggest-day':
+      requestDaySuggestion(toISODate(addDays(new Date(), state.dayOffset)));
+      break;
+    case 'undo-suggestion':
+      undoLastSuggestion();
       break;
     case 'manage-toggle':
       state.manageOpen = !state.manageOpen;
@@ -1907,9 +2099,9 @@ function init() {
   document.addEventListener('input', onGlobalInput);
   document.addEventListener('change', onGlobalChange);
   document.addEventListener('focusin', (e) => {
-    if (e.target.classList.contains('day-input') && e.target.dataset.field === 'working') {
-      lastFocusedWorkingInput = e.target;
-    }
+    if (!e.target.classList.contains('day-input')) return;
+    if (e.target.dataset.field === 'working') lastFocusedWorkingInput = e.target;
+    e.target.classList.remove('ai-suggested');
   });
 
   initTheme();
