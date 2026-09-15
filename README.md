@@ -58,6 +58,24 @@ RunP8 apps.
   path as typing it by hand, so it's not a separate "pending" state sitting
   outside the database. Backed by a new `/api/suggest-day` Function, same
   pattern and same `ANTHROPIC_API_KEY` as Chat.
+- **"✨ Ask Tello to Fill All Homes This Month"** (Month view) — the real
+  workflow is a month done in one pass, not typed in day by day, so this
+  does the same thing as the daily suggestion but for every day of the
+  month you're viewing, across every home, in one click. Confirms first
+  (it's a much bigger write than a single day), then calls a new
+  `/api/suggest-month` Function once per home — one small request per home
+  rather than one call for the whole thing or one call per day — each
+  returning that home's whole month plus a one-line summary of the pattern
+  it used. Same "only fill blank boxes, never guess a name it hasn't
+  actually seen" rule as the daily version. Writes straight to Supabase as
+  it goes (there's no single on-screen grid showing every home's whole
+  month at once to fill into the way there is for one day), so unlike the
+  daily suggestion the calendar refreshes automatically once every home is
+  done. A running fill shows "Home 3 of 8…" progress and keeps going even
+  if you navigate elsewhere; one "↩ Undo This Month's Fill" clears exactly
+  what that run wrote, and both the result summary and the undo option are
+  scoped to the month they came from — switching months hides them rather
+  than misattributing them to whatever month you're now looking at.
 - **Today's Board** — today's date, a rotating caregiver quote-of-the-day
   (same quote all day, changes at midnight, no setup needed), admin-added
   reminder cards (title, note, due time), manually-entered staff birthdays,
@@ -126,11 +144,11 @@ Open `app/index.html` and set `SUPABASE_ANON_KEY` (Supabase → Project
 Settings → API → anon public key) — it ships with a placeholder that will
 not authenticate anyone until replaced.
 
-### 3. Anthropic API key (for Chat and the "Ask Tello to Fill This Day" suggestion)
+### 3. Anthropic API key (for Chat and the "Ask Tello to Fill" suggestions)
 
-`functions/api/chat.js` and `functions/api/suggest-day.js` both call Claude
-server-side. In Cloudflare Pages → Settings → Environment variables →
-Production, add:
+`functions/api/chat.js`, `functions/api/suggest-day.js`, and
+`functions/api/suggest-month.js` all call Claude server-side. In Cloudflare
+Pages → Settings → Environment variables → Production, add:
 
 ```
 ANTHROPIC_API_KEY = sk-ant-...     (type: Secret / Encrypted)
@@ -138,11 +156,12 @@ ANTHROPIC_API_KEY = sk-ant-...     (type: Secret / Encrypted)
 
 **No prefix** — this must NOT be named `VITE_ANTHROPIC_API_KEY` or similar;
 a prefixed var would be a no-op here anyway since there's no build step to
-inline it, but keep the naming clean. Without this var set, both features
-will show a clear "not configured on the server" error rather than failing
-silently. Both functions currently call `claude-opus-5`; change the `MODEL`
-constant at the top of each file to `claude-sonnet-5` or `claude-haiku-4-5`
-for a cheaper/faster tier if Opus-level reasoning isn't needed.
+inline it, but keep the naming clean. Without this var set, all three
+features will show a clear "not configured on the server" error rather than
+failing silently. All three functions currently call `claude-opus-5`; change
+the `MODEL` constant at the top of each file to `claude-sonnet-5` or
+`claude-haiku-4-5` for a cheaper/faster tier if Opus-level reasoning isn't
+needed.
 
 ### 4. Supabase service role key (for share links)
 

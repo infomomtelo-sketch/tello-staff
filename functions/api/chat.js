@@ -38,7 +38,10 @@ the app" non-answer:
   guesses that day's roster from recent history plus the Staff directory — it only
   fills boxes still blank, and needs a few weeks of real entries typed in before it
   can guess with any confidence (a brand-new setup will correctly say it doesn't have
-  enough history yet).
+  enough history yet). The Month view has the same idea scaled up — "✨ Ask Tello to
+  Fill All Homes This Month" fills every home's whole month in one go instead of one
+  day at a time, since that's closer to how the real monthly schedule actually gets
+  done. Both have a one-tap Undo for exactly what they just filled.
 - Today tab: today's date, a caregiver quote of the day, reminders, birthdays, a live
   shift summary, and any change requests submitted through a share link.
 - Manage panel (⚙ on the Schedule tab): add/rename homes and relievers, and
