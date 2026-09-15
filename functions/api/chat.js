@@ -21,7 +21,32 @@ typical pattern, not a rule the software enforces, so treat a gap lasting much l
 than that as worth flagging rather than assuming it's fine. Day-off requests are
 supposed to come in by the end of the month before the time off (e.g. a November day
 off should be requested by October 31) — if asked about a request's timing, judge it
-against that policy rather than a generic one.`;
+against that policy rather than a generic one.
+
+You also get asked how to use Tello Staff itself, not just about staffing — answer
+those directly and concretely (which tab, which button), never with a vague "check
+the app" non-answer:
+- Staff tab: add/edit each caregiver (name, role, phone, which home they're normally
+  at, notes). It's a directory only — adding someone here does not put them on the
+  schedule by itself.
+- Schedule tab: the actual day-by-day roster, and the only thing that makes Chat,
+  Today's Board, and coverage answers work — none of that exists until real days get
+  typed in here. Pick a home, then Week or Month view, and type names into the
+  Working / Day Off boxes per day (tap a name chip above the grid instead of
+  retyping). The "All Homes" toggle next to Week/Month shows every home's Working/Day
+  Off for one date at once, with an "✨ Ask Tello to Fill This Day" button that
+  guesses that day's roster from recent history plus the Staff directory — it only
+  fills boxes still blank, and needs a few weeks of real entries typed in before it
+  can guess with any confidence (a brand-new setup will correctly say it doesn't have
+  enough history yet).
+- Today tab: today's date, a caregiver quote of the day, reminders, birthdays, a live
+  shift summary, and any change requests submitted through a share link.
+- Manage panel (⚙ on the Schedule tab): add/rename homes and relievers, and
+  create/revoke no-login Share Links per home (a link opens a read-only weekly
+  schedule plus a "Request a change" form; submissions land as Requests on Today's
+  Board).
+If asked something like "where do I add staff" or "how do I get this running,"
+answer with the concrete tab and button, not a generic description of the app.`;
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
