@@ -8,6 +8,28 @@
 -- drop the old table — if you ran an earlier version of this schema and have
 -- no data in tello_staff_schedule worth keeping, you can drop it yourself:
 --   drop table if exists tello_staff_schedule;
+--
+-- NOTE: an earlier session created some of these tables with an owner_id
+-- column instead of user_id. Every policy and app query below expects
+-- user_id, so normalize first — a no-op on a fresh database (nothing to
+-- rename yet) or one that's already on user_id.
+do $$
+declare
+  t text;
+begin
+  foreach t in array array[
+    'tello_staff_config', 'tello_staff_schedule_days', 'tello_staff_reminders',
+    'tello_staff_birthdays', 'tello_staff_chat_messages', 'tello_staff_members',
+    'tello_staff_share_links', 'tello_staff_requests'
+  ]
+  loop
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = t and column_name = 'owner_id')
+       and not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = t and column_name = 'user_id')
+    then
+      execute format('alter table %I rename column owner_id to user_id', t);
+    end if;
+  end loop;
+end $$;
 
 create table if not exists tello_staff_config (
   user_id uuid primary key references auth.users(id) on delete cascade,
