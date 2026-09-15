@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#1a3a2e" />
+<meta name="robots" content="noindex, nofollow" />
+<title>My Shift — Tello Staff</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Crect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27%231a3a2e%27/%3E%3Ctext x=%2750%27 y=%2770%27 font-size=%2760%27 font-family=%27Arial,sans-serif%27 font-weight=%27bold%27 fill=%27%23e8c15c%27 text-anchor=%27middle%27%3ET%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/marketing.css" />
+<style>
+  .shift-main { max-width: 560px; margin: 0 auto; padding: 32px 20px 64px; }
+  .shift-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+  .shift-greeting { font-size: 22px; margin-bottom: 24px; }
+  .today-card {
+    background: linear-gradient(135deg, var(--bg-card), var(--bg-elevated));
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 28px;
+    text-align: center;
+  }
+  .today-card .today-label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 10px; }
+  .today-card .today-status { font-size: 22px; font-weight: 800; margin-bottom: 4px; }
+  .today-card .today-time { font-size: 15px; color: var(--accent); font-weight: 600; }
+  .today-card.is-off .today-status { color: var(--text); }
+  .today-card.is-none .today-status { color: var(--text-muted); }
+  .upcoming-title { font-size: 15px; margin: 0 0 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .day-list { display: flex; flex-direction: column; gap: 8px; }
+  .day-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+  .day-row .day-name { font-weight: 700; min-width: 90px; }
+  .day-row .day-detail { color: var(--text-muted); text-align: right; }
+  .day-row .day-detail.working { color: var(--text); font-weight: 600; }
+  .day-row .day-detail .day-time { color: var(--accent); }
+  .shift-note { font-size: 12px; color: var(--text-muted); margin-top: 24px; text-align: center; }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a href="/" class="logo">Tello <span>Staff</span></a>
+  </div>
+</header>
+
+<main class="shift-main">
+  <div id="content" class="shift-state">Loading your schedule…</div>
+</main>
+
+<script>
+function esc(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function fmtDateLabel(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function renderError(message) {
+  document.getElementById('content').innerHTML = `
+    <div class="shift-state">
+      <h2>Can't load this schedule</h2>
+      <p>${esc(message)}</p>
+    </div>`;
+}
+
+function shiftsLabel(shifts) {
+  return shifts.map((s) => {
+    const time = s.start && s.end ? ` <span class="day-time">${esc(s.start)}–${esc(s.end)}</span>` : '';
+    return `${esc(s.homeName)}${time}`;
+  }).join(', ');
+}
+
+function renderSchedule(data) {
+  const today = data.days[0];
+  const rest = data.days.slice(1);
+
+  let todayStatusHtml;
+  let todayClass = '';
+  if (today.status === 'working') {
+    const shift = today.shifts[0];
+    todayStatusHtml = `Working at ${esc(shift.homeName)}`;
+    if (today.shifts.length > 1) todayStatusHtml += ` (+${today.shifts.length - 1} more)`;
+  } else if (today.status === 'dayOff') {
+    todayStatusHtml = "You're off today";
+    todayClass = 'is-off';
+  } else {
+    todayStatusHtml = 'Not on the schedule yet';
+    todayClass = 'is-none';
+  }
+  const todayTimeHtml = (today.status === 'working' && today.shifts[0].start && today.shifts[0].end)
+    ? `<div class="today-time">${esc(today.shifts[0].start)}–${esc(today.shifts[0].end)}</div>`
+    : '';
+
+  const restHtml = rest.map((d) => {
+    let detail;
+    let cls = '';
+    if (d.status === 'working') { detail = shiftsLabel(d.shifts); cls = 'working'; }
+    else if (d.status === 'dayOff') detail = 'Day off';
+    else detail = 'Not scheduled yet';
+    return `
+      <div class="day-row">
+        <div class="day-name">${d.label}<br><span style="font-weight:400;color:var(--text-muted);font-size:12px;">${fmtDateLabel(d.date)}</span></div>
+        <div class="day-detail ${cls}">${detail}</div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('content').innerHTML = `
+    <h1 class="shift-greeting">Hi ${esc(data.staffName)}</h1>
+
+    <div class="today-card ${todayClass}">
+      <div class="today-label">Today · ${fmtDateLabel(today.date)}</div>
+      <div class="today-status">${todayStatusHtml}</div>
+      ${todayTimeHtml}
+    </div>
+
+    <h2 class="upcoming-title">Coming up</h2>
+    <div class="day-list">${restHtml}</div>
+
+    <p class="shift-note">This is pulled from wherever your name shows up on the schedule — if
+      something looks wrong, check with the admin.</p>
+  `;
+}
+
+async function init() {
+  const token = new URLSearchParams(location.search).get('token');
+  if (!token) {
+    renderError('No link was provided. Ask the admin to resend your link.');
+    return;
+  }
+  try {
+    const res = await fetch(`/api/staff-share-data?token=${encodeURIComponent(token)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    renderSchedule(data);
+  } catch (err) {
+    renderError(err.message);
+  }
+}
+
+init();
+</script>
+</body>
+</html>

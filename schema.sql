@@ -82,20 +82,34 @@ create table if not exists tello_staff_members (
   updated_at timestamptz not null default now()
 );
 
--- Per-home shareable links (read-only schedule view, no caregiver login).
--- Deliberately no public RLS policy here — the public share page reads
--- through functions/api/share-data.js using the Supabase service role key,
--- which bypasses RLS entirely server-side. Anon/authenticated clients get
--- no special access to this table beyond their own rows.
+-- Shareable links (read-only, no caregiver login): either a per-home
+-- schedule view (home_id set, read by functions/api/share-data.js) or a
+-- per-staff-member "where + what time do I work" view (staff_id set, read
+-- by functions/api/staff-share-data.js) — exactly one of the two per row.
+-- Deliberately no public RLS policy here — both public pages read through
+-- their Function using the Supabase service role key, which bypasses RLS
+-- entirely server-side. Anon/authenticated clients get no special access to
+-- this table beyond their own rows.
 create table if not exists tello_staff_share_links (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  home_id text not null,
+  home_id text,
+  staff_id text,
   token text not null unique,
   created_at timestamptz not null default now(),
-  revoked_at timestamptz
+  revoked_at timestamptz,
+  constraint tello_staff_share_links_kind check (
+    (home_id is not null and staff_id is null) or (home_id is null and staff_id is not null)
+  )
 );
 create index if not exists tello_staff_share_links_token on tello_staff_share_links (token);
+-- Re-running this script on a database created before staff_id existed:
+alter table tello_staff_share_links alter column home_id drop not null;
+alter table tello_staff_share_links add column if not exists staff_id text;
+alter table tello_staff_share_links drop constraint if exists tello_staff_share_links_kind;
+alter table tello_staff_share_links add constraint tello_staff_share_links_kind check (
+  (home_id is not null and staff_id is null) or (home_id is null and staff_id is not null)
+);
 
 -- Change requests submitted from a share page. home_name/staff_name are
 -- denormalized snapshots (not FKs) since the public submitter has no

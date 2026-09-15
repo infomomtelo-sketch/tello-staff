@@ -538,7 +538,8 @@
   .staff-row { display: flex; gap: 8px; flex-wrap: wrap; }
   .staff-row > * { flex: 1; min-width: 130px; }
   .staff-notes { min-height: 44px; resize: vertical; }
-  .staff-item-footer { display: flex; justify-content: flex-end; }
+  .staff-item-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .staff-share-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
   /* ---------- Chat view ---------- */
   .card-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
@@ -1537,7 +1538,20 @@ async function createShareLink(homeId) {
     .insert({ user_id: state.user.id, home_id: homeId, token });
   if (error) { console.error(error); return; }
   await loadShareLinks();
-  renderSchedule();
+  renderApp();
+}
+
+// A staff member's personal, no-login "where + what time do I work" link —
+// same table and revoke/copy mechanics as the per-home links above, just
+// keyed by staff_id instead of home_id (exactly one of the two is ever set;
+// see the check constraint in schema.sql).
+async function createStaffShareLink(staffId) {
+  const token = crypto.randomUUID().replace(/-/g, '');
+  const { error } = await sb.from('tello_staff_share_links')
+    .insert({ user_id: state.user.id, staff_id: staffId, token });
+  if (error) { console.error(error); return; }
+  await loadShareLinks();
+  renderApp();
 }
 
 async function revokeShareLink(id) {
@@ -1546,11 +1560,11 @@ async function revokeShareLink(id) {
     .update({ revoked_at: new Date().toISOString() }).eq('id', id);
   if (error) console.error(error);
   await loadShareLinks();
-  renderSchedule();
+  renderApp();
 }
 
-function copyShareLink(token) {
-  const url = `${location.origin}/share.html?token=${token}`;
+function copyShareLink(token, path) {
+  const url = `${location.origin}${path || '/share.html'}?token=${token}`;
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(url).then(
       () => window.alert('Link copied:\n' + url),
@@ -2098,7 +2112,9 @@ function homeOptionsHtml(selectedHomeId) {
 
 function renderStaff() {
   const list = state.staff.length
-    ? state.staff.map((m) => `
+    ? state.staff.map((m) => {
+        const staffLink = state.shareLinks.find((l) => l.staff_id === m.id && !l.revoked_at);
+        return `
         <div class="staff-item">
           <div class="staff-row">
             <input type="text" class="staff-field" data-kind="staff-field" data-id="${m.id}" data-field="name" value="${esc(m.name)}" placeholder="Name" />
@@ -2110,9 +2126,16 @@ function renderStaff() {
           </div>
           <textarea class="staff-notes" data-kind="staff-field" data-id="${m.id}" data-field="notes" placeholder="Notes (optional)">${esc(m.notes || '')}</textarea>
           <div class="staff-item-footer">
+            <div class="staff-share-actions">
+              ${staffLink
+                ? `<button class="btn-outline small" data-action="copy-share-link" data-token="${esc(staffLink.token)}" data-path="/my-shift.html">📋 Copy My-Shift Link</button>
+                   <button class="btn-remove" data-action="revoke-share-link" data-id="${staffLink.id}">Revoke</button>`
+                : `<button class="btn-outline small" data-action="create-staff-share-link" data-staff="${m.id}">🔗 Create My-Shift Link</button>`}
+            </div>
             <button class="btn-remove" data-action="staff-delete" data-id="${m.id}">✕ Remove</button>
           </div>
-        </div>`).join('')
+        </div>`;
+      }).join('')
     : `<div class="muted">No staff added yet.</div>`;
 
   document.getElementById('view-staff').innerHTML = `
@@ -2127,6 +2150,11 @@ function renderStaff() {
       </form>
     </section>
     <h3 class="section-title">Staff (${state.staff.length})</h3>
+    <p class="muted" style="margin-bottom:10px;">"My-Shift Link" on each person below gives them a
+      no-login page showing today's (and this week's) home + time, pulled from wherever their name
+      appears on the Schedule Board — text or bookmark it to them once. Matching depends on the
+      schedule using this exact name, so it's most reliable when typed via the assigned-staff chips
+      on the Schedule Board rather than a nickname or typo.</p>
     <div class="list">${list}</div>
   `;
 }
@@ -2244,8 +2272,11 @@ function onGlobalClick(e) {
     case 'create-share-link':
       createShareLink(btn.dataset.home);
       break;
+    case 'create-staff-share-link':
+      createStaffShareLink(btn.dataset.staff);
+      break;
     case 'copy-share-link':
-      copyShareLink(btn.dataset.token);
+      copyShareLink(btn.dataset.token, btn.dataset.path);
       break;
     case 'revoke-share-link':
       revokeShareLink(btn.dataset.id);

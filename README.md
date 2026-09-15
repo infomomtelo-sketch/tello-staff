@@ -16,12 +16,17 @@ RunP8 apps.
   Sign-in links throughout the marketing site point at `/app/`.
 - `/share.html` — the public, unauthenticated per-home schedule page a
   caregiver opens from a link the admin generates (see Share Links below).
+- `/my-shift.html` — the public, unauthenticated personal "where + what time
+  do I work" page a staff member opens from their own link (see My-Shift
+  Links below).
 - `/functions/api/chat.js` — the Chat tab's backend, served at `/api/chat`
   regardless of which page calls it.
 - `/functions/api/share-data.js`, `/functions/api/share-request.js` — power
   `/share.html`: validate the link token and read/write schedule data and
   requests using the Supabase **service role** key (bypasses RLS), so the
   rest of the database stays locked down to the signed-in admin only.
+- `/functions/api/staff-share-data.js` — powers `/my-shift.html` the same
+  way: token-validated, service-role key, no RLS changes.
 
 ## What's built (in `/app/`)
 
@@ -42,9 +47,8 @@ RunP8 apps.
   `working_shifts` data (one `{name, start, end}` per line), so Chat can
   answer a "what time does X work" question correctly, and both "Ask Tello
   to Fill" features carry a person's usual time forward if their history
-  shows one consistently. This is prep work for a later personal per-staff
-  link ("where and what time do I work today") — not built yet, but this is
-  the foundation it needs.
+  shows one consistently. This is what the My-Shift Links below read to
+  answer "where and what time do I work today."
 - **All Homes view** (third toggle on the Schedule Board, next to Week/Month)
   — a master roster for one date: every home listed with its Working and Day
   Off boxes in a single screen, so the admin can fill a whole day across all
@@ -120,6 +124,19 @@ RunP8 apps.
   specific request submitted past that deadline gets a **Late** badge — with
   a one-click "Mark Handled." Approving doesn't touch the Schedule Board
   automatically, you still go update the shift yourself.
+- **My-Shift Links** (Staff tab, per person) — the personal counterpart to
+  Share Links: a no-login link to `/my-shift.html` showing just that one
+  staff member's own "Today: Working at [Home], 7am–3pm" (or "You're off" /
+  "Not scheduled yet"), plus the next 6 days below it — so a caregiver can
+  check where and when to show up without calling the admin. Text or
+  bookmark it to them once; revoke any time. It works by scanning every
+  home's Working/Day Off text for an exact (case-insensitive) match on that
+  person's directory name — there's no real link between a staff row and a
+  schedule entry, so it's only as reliable as the schedule using that same
+  spelling (typing it via the assigned-staff chips, rather than a nickname
+  or typo, keeps it matching). Shares the same `tello_staff_share_links`
+  table and revoke/copy code as home Share Links, just keyed by `staff_id`
+  instead of `home_id`.
 - **Chat knows the staffing pattern** — Tello's context now includes that
   each home runs two main caregivers with a reliever normally covering
   about two days when one is off, and the days-off deadline policy, so its
@@ -144,11 +161,14 @@ new and replaces the old `tello_staff_schedule` (one JSONB blob per week) —
 the script leaves the old table alone since it doesn't know whether it holds
 data you still want; drop it yourself once you've checked. If you ran the
 schema before `working_shifts` existed, re-running it now adds that column
-in place via `alter table ... add column if not exists` — no data loss.
+in place via `alter table ... add column if not exists` — no data loss. Same
+for `tello_staff_share_links.staff_id` (added for My-Shift Links): re-running
+relaxes `home_id` to nullable and adds `staff_id` plus a check constraint
+requiring exactly one of the two — existing home-link rows are unaffected.
 
 Note: `tello_staff_share_links` and `tello_staff_requests` intentionally have
 **no public RLS policy** — only the owning admin can read/write them directly.
-The public share page never talks to Supabase directly; it goes through the
+The public share pages never talk to Supabase directly; they go through the
 Functions below, which use the service role key to bypass RLS in a
 controlled way (token-checked, not identity-checked).
 
@@ -212,8 +232,8 @@ this is set.
   `main` currently carries a different, unrelated in-progress rewrite of
   this app from another session.
 - Connect this repo, no build command, output directory = repo root.
-  Cloudflare Pages auto-detects `functions/api/chat.js` and deploys it
-  alongside the static site — no separate Worker to set up.
+  Cloudflare Pages auto-detects everything under `functions/api/` and
+  deploys it alongside the static site — no separate Worker to set up.
 - `REDIRECT_URL` in `app/index.html` is hardcoded to
   `https://carehome-application-form.pages.dev/app/` to match. If it changes,
   add the new URL to Supabase → Authentication → URL Configuration →
