@@ -125,18 +125,22 @@ RunP8 apps.
   a one-click "Mark Handled." Approving doesn't touch the Schedule Board
   automatically, you still go update the shift yourself.
 - **My-Shift Links** (Staff tab, per person) — the personal counterpart to
-  Share Links: a no-login link to `/my-shift.html` showing just that one
-  staff member's own "Today: Working at [Home], 7am–3pm" (or "You're off" /
-  "Not scheduled yet"), plus the next 6 days below it — so a caregiver can
-  check where and when to show up without calling the admin. Text or
-  bookmark it to them once; revoke any time. It works by scanning every
-  home's Working/Day Off text for an exact (case-insensitive) match on that
-  person's directory name — there's no real link between a staff row and a
-  schedule entry, so it's only as reliable as the schedule using that same
-  spelling (typing it via the assigned-staff chips, rather than a nickname
-  or typo, keeps it matching). Shares the same `tello_staff_share_links`
-  table and revoke/copy code as home Share Links, just keyed by `staff_id`
-  instead of `home_id`.
+  Share Links: a no-login link to `/my-shift.html` showing that one staff
+  member's own working days and days off for a whole calendar month (‹ ›
+  to flip months), matching the month-at-a-time way the schedule itself
+  actually gets filled in rather than a short day-by-day lookahead. A
+  "Today: Working at [Home], 7am–3pm" (or "You're off" / "Not scheduled
+  yet") card sits on top when viewing the current month, and today's row is
+  highlighted in the list below it. So a caregiver can check where and when
+  to show up — for today or for the rest of the month — without calling the
+  admin. Text or bookmark it to them once; revoke any time. It works by
+  scanning every home's Working/Day Off text for an exact (case-insensitive)
+  match on that person's directory name — there's no real link between a
+  staff row and a schedule entry, so it's only as reliable as the schedule
+  using that same spelling (typing it via the assigned-staff chips, rather
+  than a nickname or typo, keeps it matching). Shares the same
+  `tello_staff_share_links` table and revoke/copy code as home Share Links,
+  just keyed by `staff_id` instead of `home_id`.
 - **Chat knows the staffing pattern** — Tello's context now includes that
   each home runs two main caregivers with a reliever normally covering
   about two days when one is off, and the days-off deadline policy, so its

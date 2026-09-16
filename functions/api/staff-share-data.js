@@ -1,9 +1,10 @@
-// Cloudflare Pages Function — GET /api/staff-share-data?token=...
+// Cloudflare Pages Function — GET /api/staff-share-data?token=...&month=YYYY-MM
 // Powers the public, unauthenticated personal schedule page (/my-shift.html)
-// — a staff member's own "where + what time do I work" view. Same security
-// pattern as /api/share-data.js: reads via the Supabase SERVICE ROLE key
-// (bypasses RLS) rather than loosening RLS, with the token itself as the
-// access control, validated here on the server, never in the browser.
+// — a staff member's own "where + what time do I work" view, for a whole
+// calendar month at a time (?month defaults to the current month). Same
+// security pattern as /api/share-data.js: reads via the Supabase SERVICE
+// ROLE key (bypasses RLS) rather than loosening RLS, with the token itself
+// as the access control, validated here on the server, never in the browser.
 //
 // Matching a name against the schedule is necessarily best-effort: the
 // Schedule Board is free text, not a dropdown of staff IDs, so a person's
@@ -12,7 +13,6 @@
 // every home, not by any real foreign key.
 
 const SUPABASE_URL = 'https://nwlhsshvqmbhemhxcran.supabase.co';
-const DAY_LOOKAHEAD = 7;
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
@@ -26,10 +26,16 @@ function toISODate(d) {
   return tz.toISOString().slice(0, 10);
 }
 
-function addDays(date, n) {
-  const d = new Date(date);
-  d.setDate(d.getDate() + n);
-  return d;
+function monthKey(year, monthIndex) {
+  return `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
+}
+
+function parseMonthParam(monthStr) {
+  const m = /^(\d{4})-(\d{2})$/.exec(monthStr || '');
+  if (!m) return null;
+  const monthIndex = Number(m[2]) - 1;
+  if (monthIndex < 0 || monthIndex > 11) return null;
+  return { year: Number(m[1]), monthIndex };
 }
 
 function namesMatch(a, b) {
@@ -84,12 +90,21 @@ export async function onRequestGet({ request, env }) {
 
   const now = new Date();
   const todayStr = toISODate(now);
-  const endStr = toISODate(addDays(now, DAY_LOOKAHEAD - 1));
+  const { year, monthIndex } = parseMonthParam(url.searchParams.get('month'))
+    || { year: now.getFullYear(), monthIndex: now.getMonth() };
+
+  const monthStart = new Date(year, monthIndex, 1);
+  const monthEnd = new Date(year, monthIndex + 1, 0);
+  const daysInMonth = monthEnd.getDate();
+  const startStr = toISODate(monthStart);
+  const endStr = toISODate(monthEnd);
+  const prevMonthDate = new Date(year, monthIndex - 1, 1);
+  const nextMonthDate = new Date(year, monthIndex + 1, 1);
 
   let rows = [];
   if (homeIds.length) {
     const { data } = await supabaseGet(
-      `tello_staff_schedule_days?user_id=eq.${link.user_id}&entity_kind=eq.home&entity_id=in.(${homeIds.join(',')})&date=gte.${todayStr}&date=lte.${endStr}&select=entity_id,date,day_off,working_shifts`,
+      `tello_staff_schedule_days?user_id=eq.${link.user_id}&entity_kind=eq.home&entity_id=in.(${homeIds.join(',')})&date=gte.${startStr}&date=lte.${endStr}&select=entity_id,date,day_off,working_shifts`,
       serviceKey
     );
     rows = Array.isArray(data) ? data : [];
@@ -111,18 +126,27 @@ export async function onRequestGet({ request, env }) {
     byDate[row.date] = bucket;
   });
 
-  const days = Array.from({ length: DAY_LOOKAHEAD }, (_, i) => {
-    const date = addDays(now, i);
+  const days = Array.from({ length: daysInMonth }, (_, i) => {
+    const date = new Date(year, monthIndex, i + 1);
     const dateStr = toISODate(date);
     const bucket = byDate[dateStr] || { shifts: [], dayOff: false };
     const status = bucket.shifts.length ? 'working' : (bucket.dayOff ? 'dayOff' : 'none');
     return {
       date: dateStr,
-      label: date.toLocaleDateString('en-US', { weekday: 'long' }),
+      dayOfMonth: i + 1,
+      weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
       status,
       shifts: bucket.shifts,
     };
   });
 
-  return json({ staffName, today: todayStr, days });
+  return json({
+    staffName,
+    today: todayStr,
+    monthLabel: monthStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+    month: monthKey(year, monthIndex),
+    prevMonth: monthKey(prevMonthDate.getFullYear(), prevMonthDate.getMonth()),
+    nextMonth: monthKey(nextMonthDate.getFullYear(), nextMonthDate.getMonth()),
+    days,
+  });
 }
