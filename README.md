@@ -113,6 +113,19 @@ RunP8 apps.
   retyping. The two systems otherwise stay independent by design (the
   schedule accepts anyone, typed exactly as needed, not only directory
   names).
+- **"👥 Staff" drag panel** (Schedule Board toolbar, every view) — a second,
+  broader way to place names: opens a panel listing *every* staff member
+  (not just people assigned to the home you're currently viewing, since a
+  reliever covering there might not be), each as a tile you drag straight
+  onto any Working or Day Off box — no need to click into the box first.
+  Dropping shows a dashed gold outline on the box you're over, then appends
+  the name (same as the chip strip) once you let go. Built on Pointer
+  Events rather than the HTML5 drag-and-drop API, since native HTML5 DnD
+  doesn't fire from a touch gesture on iOS/Android — this way the same code
+  drives both a mouse drag and a finger drag on a phone. A tap on a tile
+  with no real drag still falls back to the older "insert into whatever box
+  you last clicked into" behavior, so nothing about the existing chip strip
+  changes.
 - **Share Links** (Schedule Board → Manage) — generate a per-home, no-login
   link to `/share.html` showing that home's current-week schedule and the
   reliever pool read-only, plus a "Request a change" form (the form shows

@@ -455,6 +455,49 @@
   .all-homes-input { height: 56px; }
   .ai-suggested { outline: 2px solid var(--accent) !important; background: rgba(232, 193, 92, 0.10) !important; }
   .day-input.just-saved { outline: 2px solid #6bd39a !important; transition: outline-color 0.4s ease-out; }
+  .day-input.drop-target-hover { outline: 2px dashed var(--accent) !important; background: rgba(232, 193, 92, 0.15) !important; }
+
+  .staff-drag-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 16px;
+  }
+  .staff-drag-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+  .staff-drag-panel-header h4 { font-size: 13px; color: var(--text-muted); font-weight: 600; }
+  .staff-tile-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .staff-tile {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .staff-tile:active { cursor: grabbing; }
+  .staff-tile.is-dragging { opacity: 0.4; }
+  .staff-drag-ghost {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 999;
+    pointer-events: none;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 700;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+  }
 
   .suggest-bar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
   .suggest-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -735,6 +778,7 @@ const state = {
   lastMonthFill: null,
   selectedHomeId: null,
   manageOpen: false,
+  staffPanelOpen: false,
   reminders: [],
   birthdays: [],
   chatMessages: [],
@@ -1768,6 +1812,23 @@ async function renderSchedule() {
       </div>
     </div>` : '';
 
+  // Every staff member, draggable onto any Working/Day Off box in any view —
+  // unlike the per-home "assigned staff" chip strip, this isn't scoped to
+  // one home, since a name someone drags in might be a reliever covering
+  // there, not necessarily someone assigned to that home.
+  const staffDragPanel = state.staffPanelOpen ? `
+    <div id="staffDragPanel" class="staff-drag-panel no-print">
+      <div class="staff-drag-panel-header">
+        <h4>Drag a name onto any Working or Day Off box</h4>
+        <button class="btn-icon small" data-action="staff-panel-toggle" aria-label="Close">✕</button>
+      </div>
+      <div class="staff-tile-row">
+        ${state.staff.length
+          ? state.staff.map((s) => `<div class="staff-tile" data-staff-name="${esc(s.name)}">${esc(s.name)}</div>`).join('')
+          : `<span class="muted">No staff added yet — add some in the Staff tab.</span>`}
+      </div>
+    </div>` : '';
+
   document.getElementById('view-schedule').innerHTML = `
     <div class="week-bar no-print">
       ${state.scheduleView !== 'day' ? `
@@ -1784,9 +1845,11 @@ async function renderSchedule() {
       <button class="btn-icon" data-action="next-period" title="Next">›</button>
       <button class="btn-outline" data-action="today-period">Today</button>
       <button class="btn-outline" data-action="manage-toggle">⚙ Manage</button>
+      <button class="btn-outline" data-action="staff-panel-toggle">👥 Staff</button>
       <button class="btn-outline" data-action="print">🖨 Print</button>
     </div>
     ${managePanel}
+    ${staffDragPanel}
     <div class="print-only print-title">
       <h2>${esc(state.scheduleView === 'day' ? 'All Homes' : (home ? home.name : 'Tello Staff'))}</h2>
       <div>${periodLabel}</div>
@@ -1980,6 +2043,92 @@ function insertStaffNameIntoFocusedCell(name) {
   target.value = target.value + sep + name;
   target.dispatchEvent(new Event('input', { bubbles: true }));
   target.focus();
+}
+
+// ---------------------------------------------------------------------------
+// Staff tile drag-and-drop (Schedule Board "👥 Staff" panel)
+// ---------------------------------------------------------------------------
+// Built on Pointer Events, not the HTML5 drag-and-drop API — native HTML5
+// DnD never fires from a touch gesture on iOS/Android, which would make
+// this silently do nothing on a phone, the one device this app actually
+// gets used on day to day. Pointer Events unify mouse and touch, so the
+// same code drives both. A small movement threshold tells a real drag apart
+// from a plain tap, so tapping a tile still falls back to the older
+// "insert into whatever box was last focused" behavior.
+let dragState = null;
+const DRAG_THRESHOLD_PX = 8;
+
+function findDropTarget(x, y) {
+  const el = document.elementFromPoint(x, y);
+  return el ? el.closest('.day-input') : null;
+}
+
+function onDragPointerDown(e) {
+  const tile = e.target.closest('.staff-tile');
+  if (!tile) return;
+  dragState = {
+    name: tile.dataset.staffName,
+    startX: e.clientX,
+    startY: e.clientY,
+    dragging: false,
+    ghostEl: null,
+    lastHoverEl: null,
+    pointerId: e.pointerId,
+    sourceTile: tile,
+  };
+}
+
+function onDragPointerMove(e) {
+  if (!dragState || e.pointerId !== dragState.pointerId) return;
+  const dx = e.clientX - dragState.startX;
+  const dy = e.clientY - dragState.startY;
+  if (!dragState.dragging) {
+    if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+    dragState.dragging = true;
+    const ghost = document.createElement('div');
+    ghost.className = 'staff-drag-ghost';
+    ghost.textContent = dragState.name;
+    document.body.appendChild(ghost);
+    dragState.ghostEl = ghost;
+    dragState.sourceTile.classList.add('is-dragging');
+  }
+  dragState.ghostEl.style.left = `${e.clientX}px`;
+  dragState.ghostEl.style.top = `${e.clientY}px`;
+
+  const hoverEl = findDropTarget(e.clientX, e.clientY);
+  if (dragState.lastHoverEl && dragState.lastHoverEl !== hoverEl) {
+    dragState.lastHoverEl.classList.remove('drop-target-hover');
+  }
+  if (hoverEl) hoverEl.classList.add('drop-target-hover');
+  dragState.lastHoverEl = hoverEl;
+}
+
+function cleanupDrag() {
+  if (!dragState) return;
+  if (dragState.ghostEl) dragState.ghostEl.remove();
+  if (dragState.lastHoverEl) dragState.lastHoverEl.classList.remove('drop-target-hover');
+  if (dragState.sourceTile) dragState.sourceTile.classList.remove('is-dragging');
+  dragState = null;
+}
+
+function onDragPointerUp(e) {
+  if (!dragState || e.pointerId !== dragState.pointerId) return;
+  if (dragState.dragging) {
+    const target = findDropTarget(e.clientX, e.clientY);
+    if (target) {
+      const sep = target.value.trim() ? '\n' : '';
+      target.value = target.value + sep + dragState.name;
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  } else {
+    insertStaffNameIntoFocusedCell(dragState.name);
+  }
+  cleanupDrag();
+}
+
+function onDragPointerCancel(e) {
+  if (!dragState || e.pointerId !== dragState.pointerId) return;
+  cleanupDrag();
 }
 
 // ---------------------------------------------------------------------------
@@ -2282,6 +2431,10 @@ function onGlobalClick(e) {
       state.manageOpen = !state.manageOpen;
       renderSchedule();
       break;
+    case 'staff-panel-toggle':
+      state.staffPanelOpen = !state.staffPanelOpen;
+      renderSchedule();
+      break;
     case 'print':
       window.print();
       break;
@@ -2455,6 +2608,10 @@ function init() {
     if (e.target.dataset.field === 'working') lastFocusedWorkingInput = e.target;
     e.target.classList.remove('ai-suggested');
   });
+  document.addEventListener('pointerdown', onDragPointerDown);
+  document.addEventListener('pointermove', onDragPointerMove);
+  document.addEventListener('pointerup', onDragPointerUp);
+  document.addEventListener('pointercancel', onDragPointerCancel);
 
   initTheme();
 
