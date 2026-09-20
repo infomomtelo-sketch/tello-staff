@@ -454,6 +454,7 @@
   .all-homes-grid th.row-head { min-width: 130px; }
   .all-homes-input { height: 56px; }
   .ai-suggested { outline: 2px solid var(--accent) !important; background: rgba(232, 193, 92, 0.10) !important; }
+  .day-input.just-saved { outline: 2px solid #6bd39a !important; transition: outline-color 0.4s ease-out; }
 
   .suggest-bar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
   .suggest-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -1068,7 +1069,19 @@ async function saveDay(entity, entityId, dateStr) {
     working_shifts: computeWorkingShifts(workingText),
     updated_at: new Date().toISOString(),
   }, { onConflict: 'user_id,entity_kind,entity_id,date' });
-  if (error) { console.error(error); showErrorBanner(`Couldn't save that day's schedule — ${error.message}`); }
+  if (error) { console.error(error); showErrorBanner(`Couldn't save that day's schedule — ${error.message}`); return; }
+  flashSaved(workingEl);
+  flashSaved(dayOffEl);
+}
+
+// A textarea looks identical whether the last edit actually reached
+// Supabase or silently failed — typing doesn't change, only a failed save
+// showed anything (the error banner). This gives success a visible signal
+// too: a brief green outline on exactly the box(es) that just saved.
+function flashSaved(el) {
+  if (!el || !document.body.contains(el)) return;
+  el.classList.add('just-saved');
+  setTimeout(() => el.classList.remove('just-saved'), 900);
 }
 
 // ---------------------------------------------------------------------------
