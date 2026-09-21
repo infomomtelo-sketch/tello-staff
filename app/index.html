@@ -504,6 +504,43 @@
     white-space: nowrap;
   }
 
+  /* Guided tour — the spotlighted element gets a huge box-shadow spread,
+     which darkens the entire rest of the viewport around it without
+     needing a separate overlay element with a cutout. The tooltip itself
+     is fixed to the bottom of the screen rather than anchored next to the
+     target, on purpose: computing a position that stays on-screen next to
+     any arbitrary element (a button, a whole table, a bottom nav) adds a
+     lot of edge cases for not much benefit here. */
+  .tour-overlay { position: fixed; inset: 0; z-index: 550; pointer-events: auto; background: transparent; }
+  .tour-spotlight {
+    position: relative;
+    z-index: 600;
+    outline: 3px solid var(--accent) !important;
+    outline-offset: 3px;
+    border-radius: 8px;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6) !important;
+  }
+  .tour-tooltip {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+    max-width: 480px;
+    margin: 0 auto;
+    background: var(--bg-card);
+    border: 2px solid var(--accent);
+    border-radius: 14px;
+    padding: 18px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+    z-index: 700;
+  }
+  .tour-tooltip-modal { top: 50%; bottom: auto; transform: translateY(-50%); }
+  .tour-tooltip h3 { font-size: 16px; margin-bottom: 6px; }
+  .tour-tooltip p { font-size: 13px; color: var(--text-muted); margin-bottom: 14px; }
+  .tour-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .tour-controls-right { display: flex; gap: 8px; }
+  .tour-progress { font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 10px; }
+
   .suggest-bar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
   .suggest-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .suggest-note {
@@ -716,6 +753,7 @@
   <header class="app-header no-print">
     <div class="app-title">Tello <span>Staff</span></div>
     <div class="header-actions">
+      <button class="btn-icon small" data-action="start-tour" title="Guided tour">❓</button>
       <button class="btn-icon small" data-action="toggle-theme" id="themeToggleBtn" title="Switch background">☀️</button>
       <button class="btn-outline small" data-action="sign-out">Sign Out</button>
     </div>
@@ -784,6 +822,7 @@ const state = {
   selectedHomeId: null,
   manageOpen: false,
   staffPanelOpen: false,
+  tourStep: null,
   reminders: [],
   birthdays: [],
   chatMessages: [],
@@ -997,6 +1036,7 @@ async function enterApp(user) {
     // renderToday), so no need to load them here too.
   }
   renderApp();
+  maybeAutoStartTour();
 }
 
 // ---------------------------------------------------------------------------
@@ -2362,11 +2402,12 @@ function renderStaff() {
       </form>
     </section>
     <h3 class="section-title">Staff (${state.staff.length})</h3>
-    <p class="muted" style="margin-bottom:10px;">"My-Shift Link" on each person below gives them a
-      no-login page showing today's (and this week's) home + time, pulled from wherever their name
-      appears on the Schedule Board — text or bookmark it to them once. Matching depends on the
-      schedule using this exact name, so it's most reliable when typed via the assigned-staff chips
-      on the Schedule Board rather than a nickname or typo.</p>
+    <p id="myShiftHint" class="muted" style="margin-bottom:10px;">"My-Shift Link" on each person below
+      gives them a no-login page showing their own working days and days off for the whole month
+      (today highlighted, ‹ › to flip months), pulled from wherever their name appears on the Schedule
+      Board — text or bookmark it to them once. Matching depends on the schedule using this exact
+      name, so it's most reliable when typed via the assigned-staff chips on the Schedule Board rather
+      than a nickname or typo.</p>
     <div class="list">${list}</div>
   `;
 }
@@ -2489,6 +2530,21 @@ function onGlobalClick(e) {
       clearTimeout(errorBannerTimer);
       document.getElementById('errorBanner').hidden = true;
       break;
+    case 'start-tour':
+      state.tourStep = 0;
+      renderTour();
+      break;
+    case 'tour-next':
+      if (state.tourStep >= TOUR_STEPS.length - 1) finishTour();
+      else { state.tourStep += 1; renderTour(); }
+      break;
+    case 'tour-back':
+      state.tourStep = Math.max(0, state.tourStep - 1);
+      renderTour();
+      break;
+    case 'tour-skip':
+      finishTour();
+      break;
     case 'create-share-link':
       createShareLink(btn.dataset.home);
       break;
@@ -2601,6 +2657,114 @@ function toggleTheme() {
   const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
   applyTheme(next);
   try { localStorage.setItem(THEME_KEY, next); } catch { /* private mode etc. */ }
+}
+
+// ---------------------------------------------------------------------------
+// Guided tour
+// ---------------------------------------------------------------------------
+// Each step either targets a real element already on screen (selector) or
+// stands alone as a centered welcome/closing card (modal: true). A step can
+// ask for a specific tab/scheduleView first — renderTour() switches to it
+// before looking for the element, so every selector below is guaranteed to
+// exist by the time it's queried (nothing here depends on data that might
+// not exist yet, like a staff row or an active share link).
+const TOUR_SEEN_KEY = 'tello-staff-tour-seen';
+const TOUR_STEPS = [
+  { modal: true, title: 'Welcome to Tello Staff', body: "A one-minute tour of the basics. Skip anytime with the button below, or reopen this tour later from the ❓ button, top right." },
+  { tab: 'schedule', view: 'week', selector: '.bottom-nav', title: 'Four tabs', body: 'Schedule is the roster. Today has a quote, reminders, birthdays, and a live shift summary. Staff is your directory. Chat lets you ask Tello questions about coverage.' },
+  { tab: 'schedule', view: 'week', selector: '.home-select', title: 'Pick a home', body: 'Everything below is scoped to one home at a time — switch which one you\'re looking at right here.' },
+  { tab: 'schedule', view: 'week', selector: '.view-toggle', title: 'Week, Month, or All Homes', body: 'Week is for quick edits. Month shows the whole month at once, like the printed page on the wall. All Homes shows every home side by side for a single day.' },
+  { tab: 'schedule', view: 'week', selector: '.schedule-grid', title: 'Just type it', body: 'No dropdowns — type names straight into Working and Day Off, same as the paper schedule. It saves on its own a moment after you stop typing: the box flashes green when it lands, or a red banner appears at the top if something goes wrong.' },
+  { tab: 'schedule', view: 'week', selector: '[data-action="staff-panel-toggle"]', title: 'Drag names in', body: 'Opens a panel with every staff member as a tile — drag one straight onto any box instead of typing the name.' },
+  { tab: 'schedule', view: 'week', selector: '[data-action="manage-toggle"]', title: 'Manage homes & links', body: 'Add or rename homes, manage the reliever pool, and create Share Links (a no-login page for one home\'s schedule) here.' },
+  { tab: 'schedule', view: 'month', selector: '[data-action="fill-month"]', title: 'Let Tello fill a month', body: 'Once a home has a few real weeks typed in, this asks Tello to guess the rest of the month from the pattern — it only fills boxes still blank, never overwrites what you typed.' },
+  { tab: 'staff', selector: '[data-form="staff"]', title: 'Add your staff', body: 'Add each caregiver here and assign them to a home — their name then shows up as a tappable chip on that home\'s schedule.' },
+  { tab: 'staff', selector: '#myShiftHint', title: 'Personal shift links', body: 'Give each staff member their own no-login link showing just their own working days and days off for the month — no calling to ask "where am I today."' },
+  { tab: 'today', selector: '.quote-card', title: "Today's Board", body: 'A quote to start the day, reminders, birthdays, and a shift summary pulled live from the schedule — nothing to set up.' },
+  { tab: 'chat', selector: '.chat-input-bar', title: 'Ask Tello', body: 'Ask things like "who\'s free Friday night" — Tello reads the real schedule before answering, so it won\'t make up a name that isn\'t on it.' },
+  { tab: 'schedule', view: 'week', selector: '#themeToggleBtn', title: 'Light or dark', body: 'Switch backgrounds here anytime — your choice is remembered on this device.' },
+  { modal: true, title: "That's the basics", body: "Tap ❓ (top right) anytime you want to see this again." },
+];
+
+async function renderTour() {
+  document.querySelectorAll('.tour-spotlight').forEach((el) => el.classList.remove('tour-spotlight'));
+  let overlayEl = document.getElementById('tourOverlay');
+
+  if (state.tourStep === null) {
+    if (overlayEl) overlayEl.remove();
+    return;
+  }
+
+  const step = TOUR_STEPS[state.tourStep];
+  const needsTabSwitch = step.tab && state.tab !== step.tab;
+  const needsViewSwitch = step.view && state.scheduleView !== step.view;
+
+  // renderApp()/renderSchedule() are the normal fire-and-forget dispatchers
+  // used everywhere else — fine when nothing downstream needs to know when
+  // the DOM actually finished updating. Here something does: renderSchedule
+  // and renderToday both fetch from Supabase before writing their HTML, so
+  // spotlighting a target right after triggering one of those (without
+  // awaiting it) would query the OLD, about-to-be-replaced DOM and silently
+  // find nothing. Call the actual render function directly and await it.
+  if (needsTabSwitch) {
+    state.tab = step.tab;
+    document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.tab));
+    document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+    const view = document.getElementById('view-' + state.tab);
+    if (view) view.classList.add('active');
+  }
+  if (needsViewSwitch) state.scheduleView = step.view;
+  if (needsTabSwitch || needsViewSwitch) {
+    if (state.tab === 'schedule') await renderSchedule();
+    else if (state.tab === 'today') await renderToday();
+    else if (state.tab === 'chat') renderChat();
+    else if (state.tab === 'staff') renderStaff();
+  }
+
+  if (!step.modal) {
+    const targetEl = document.querySelector(step.selector);
+    if (targetEl) {
+      targetEl.classList.add('tour-spotlight');
+      targetEl.scrollIntoView({ block: 'center', behavior: 'instant' });
+    }
+  }
+
+  const isFirst = state.tourStep === 0;
+  const isLast = state.tourStep === TOUR_STEPS.length - 1;
+
+  if (!overlayEl) {
+    overlayEl = document.createElement('div');
+    overlayEl.id = 'tourOverlay';
+    overlayEl.className = 'tour-overlay';
+    document.body.appendChild(overlayEl);
+  }
+  overlayEl.innerHTML = `
+    <div class="tour-tooltip ${step.modal ? 'tour-tooltip-modal' : ''}">
+      <h3>${esc(step.title)}</h3>
+      <p>${esc(step.body)}</p>
+      <div class="tour-controls">
+        <button data-action="tour-skip" class="btn-outline small">Skip</button>
+        <div class="tour-controls-right">
+          ${!isFirst ? `<button data-action="tour-back" class="btn-outline small">Back</button>` : ''}
+          <button data-action="tour-next" class="btn-primary small">${isLast ? 'Done' : 'Next'}</button>
+        </div>
+      </div>
+      <div class="tour-progress">${state.tourStep + 1} / ${TOUR_STEPS.length}</div>
+    </div>`;
+}
+
+function finishTour() {
+  state.tourStep = null;
+  renderTour();
+  try { localStorage.setItem(TOUR_SEEN_KEY, '1'); } catch { /* private mode etc. */ }
+}
+
+function maybeAutoStartTour() {
+  let seen = false;
+  try { seen = localStorage.getItem(TOUR_SEEN_KEY) === '1'; } catch { /* private mode etc. */ }
+  if (seen || state.tourStep !== null) return;
+  state.tourStep = 0;
+  renderTour();
 }
 
 function init() {

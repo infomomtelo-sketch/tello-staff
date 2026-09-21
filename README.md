@@ -163,6 +163,15 @@ RunP8 apps.
 - Auth: Supabase email/password sign in, sign up, and password reset.
 - Light/dark background toggle (☀️/🌙 button, top right) — defaults to the
   dark green theme, remembers the choice per browser via `localStorage`.
+- **Guided tour** (❓ button, top right, next to the theme toggle) — a
+  14-step walkthrough that spotlights the real button/box it's talking
+  about (Manage, the Staff drag panel, "Ask Tello to Fill," Add Staff, My-
+  Shift Links, the theme toggle, etc.), switching tabs and Schedule Board
+  views as needed so every step lands on a real, currently-visible element
+  rather than a screenshot or a description. Runs automatically the first
+  time anyone opens the app on a given browser (tracked via `localStorage`,
+  so it won't repeat there), and can be reopened anytime from the ❓ button.
+  Skip or Back at any point; nothing about the tour touches Supabase data.
 
 ## Setup
 
