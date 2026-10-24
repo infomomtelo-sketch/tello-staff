@@ -472,7 +472,11 @@
     .schedule-grid input, .schedule-grid select { border: none !important; background: transparent !important; appearance: none; -webkit-appearance: none; }
     .section-title, .week-label { color: #000 !important; }
     .app-main { padding-bottom: 0; }
+    #view-time, #view-time * { color: #000 !important; background: #fff !important; border-color: #bbb !important; }
+    #view-time input { border: none !important; appearance: none; -webkit-appearance: none; padding: 0 !important; }
+    .print-only { display: block !important; }
   }
+  .print-only { display: none; }
 </style>
 </head>
 <body>
@@ -600,6 +604,10 @@ const state = {
   clockMsg: '',
   voiceReady: false,
   myShiftsToday: [],
+  openAll: [],
+  timeFrom: '',
+  timeTo: '',
+  timeStaff: '',
 };
 
 function isAdmin() { return state.role === 'admin'; }
@@ -761,6 +769,7 @@ async function enterApp(user) {
       if (!clockTimer) clockTimer = setInterval(clockTick, 15000);
       clockTick();
     }
+    else if (!clockTimer) clockTimer = setInterval(adminTick, 60000);
   }
   renderApp();
 }
@@ -1929,19 +1938,36 @@ function openBreak(e) {
 
 // ---- Data ----
 async function loadTimeEntries() {
-  const since = addDays(new Date(), -14).toISOString();
-  let q = sb.from('tello_staff_time_entries').select('*').gte('clock_in', since).order('clock_in', { ascending: false });
+  let from, to = null;
+  if (isAdmin()) {
+    from = new Date(state.timeFrom + 'T00:00:00');
+    to = addDays(new Date(state.timeTo + 'T00:00:00'), 1);
+  } else {
+    from = addDays(new Date(), -14);
+  }
+  let q = sb.from('tello_staff_time_entries').select('*').gte('clock_in', from.toISOString()).order('clock_in', { ascending: false });
+  if (to) q = q.lt('clock_in', to.toISOString());
   if (!isAdmin()) q = q.eq('user_id', state.user.id);
   const { data, error } = await q;
   if (error) { console.error(error); state.timeEntries = []; return; }
   state.timeEntries = data || [];
-  if (!isAdmin()) {
+  if (isAdmin()) {
+    await loadOpenAll();
+  } else {
     // The open entry may be older than the 14-day window (forgot to clock out).
     const open = await sb.from('tello_staff_time_entries').select('*')
       .eq('user_id', state.user.id).is('clock_out', null).maybeSingle();
     state.openEntry = open.data || null;
     if (state.openEntry && !state.timeEntries.find((x) => x.id === state.openEntry.id)) state.timeEntries.unshift(state.openEntry);
   }
+}
+
+// Everyone currently clocked in (any date), for the admin's live list + alerts.
+async function loadOpenAll() {
+  const { data, error } = await sb.from('tello_staff_time_entries').select('*')
+    .is('clock_out', null).order('clock_in', { ascending: true });
+  if (error) console.error(error);
+  state.openAll = data || [];
 }
 
 async function patchEntry(id, patch) {
@@ -2158,9 +2184,108 @@ async function renderClock() {
     <p class="muted">Times are recorded from this device's clock. Your employer's payroll record is the official one.</p>`;
 }
 
-// ---- Render: admin Time tab (settings + timesheets) ----
+// ---- Render: admin Time tab (live list, alerts, settings, timesheets) ----
+function staffName(x) {
+  const s = state.staff.find((m) => m.id === x.staff_member_id);
+  return s ? s.name : 'Unknown';
+}
+
+// Minutes past when this open entry should have been clocked out (0 = not overdue).
+function overdueMinutes(e, now = new Date()) {
+  const sh = state.clockSettings.shifts[e.shift_key];
+  if (sh) {
+    const late = (now - nextOccurrence(new Date(e.clock_in), sh.end)) / 60000;
+    return late >= 30 ? late : 0;
+  }
+  const hrs = (now - new Date(e.clock_in)) / 3600000;
+  return hrs >= 14 ? (hrs - 14) * 60 : 0;
+}
+
+function onClockHtml() {
+  const now = new Date();
+  if (!state.openAll.length) return `<div class="muted">Nobody is clocked in right now.</div>`;
+  return state.openAll.map((e) => {
+    const ob = openBreak(e);
+    const late = overdueMinutes(e, now);
+    return `<div class="shift-row"><div class="shift-home">${esc(staffName(e))}</div><div class="shift-slots">
+      <span>${esc(SHIFT_LABELS[e.shift_key] || 'Shift')}</span>
+      <span>since ${fmtClockTime(new Date(e.clock_in))}</span>
+      <span class="filled">${fmtDur(entryStats(e, now).worked)}</span>
+      ${ob ? `<span>☕ on ${esc(ob.label)} since ${fmtClockTime(new Date(ob.start))}</span>` : ''}
+      ${late ? `<span class="flag-over">⚠ past shift end</span>` : ''}
+    </div></div>`;
+  }).join('');
+}
+
+function alertsHtml() {
+  const now = new Date();
+  const items = state.openAll.map((e) => ({ e, late: overdueMinutes(e, now) })).filter((x) => x.late);
+  if (!items.length) return '';
+  return `<h3 class="section-title">⚠ Possibly forgot to clock out</h3>
+    <section class="card">
+      <p>Confirm the real time with the staff member before changing a record.</p>
+      ${items.map(({ e, late }) => {
+        const sh = state.clockSettings.shifts[e.shift_key];
+        const endAt = sh ? nextOccurrence(new Date(e.clock_in), sh.end) : null;
+        return `<div class="shift-row"><div class="shift-home">${esc(staffName(e))}</div><div class="shift-slots">
+          <span class="flag-over">Still clocked in — ${endAt ? `shift ended ${fmtClockTime(endAt)}, ` : ''}${fmtDur(late)} ago</span>
+          ${endAt ? `<button class="btn-outline small" data-action="force-out" data-id="${e.id}" data-at="${endAt.toISOString()}">Clock out at ${fmtClockTime(endAt)}</button>` : ''}
+          <label class="muted">or set time: <input type="datetime-local" data-kind="te-out" data-id="${e.id}" /></label>
+        </div></div>`;
+      }).join('')}
+    </section>`;
+}
+
+async function refreshOnClock() {
+  await loadOpenAll();
+  const a = document.getElementById('onClockBox');
+  const b = document.getElementById('alertBox');
+  if (a) a.innerHTML = onClockHtml();
+  if (b) b.innerHTML = alertsHtml();
+}
+
+function adminTick() {
+  const ae = document.activeElement;
+  if (state.tab === 'time' && !(ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName))) refreshOnClock();
+}
+
+function filteredEntries() {
+  return state.timeEntries.filter((x) => !state.timeStaff || x.staff_member_id === state.timeStaff);
+}
+
+function csvCell(v) {
+  let t = String(v ?? '');
+  if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; // stop spreadsheet formula injection
+  return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+}
+
+function exportTimesheetCsv() {
+  const header = ['Staff', 'Date', 'Shift', 'Clock In', 'Clock Out', 'Breaks (actual/allowed min, paid or unpaid)', 'Break Overage Min', 'Paid Break Overage Min', 'Unpaid Break Min Deducted', 'Worked Hours', 'Adjusted By Admin'];
+  const lines = [header.map(csvCell).join(',')];
+  filteredEntries().slice().reverse().forEach((x) => {
+    const st = entryStats(x);
+    const brk = (x.breaks || []).map((b) => {
+      const act = Math.round(((b.end ? new Date(b.end) : new Date()) - new Date(b.start)) / 60000);
+      return `${b.label} ${act}/${b.allowed} ${b.paid ? 'paid' : 'unpaid'}`;
+    }).join('; ');
+    const fmt = (iso) => (iso ? toLocalInput(iso).replace('T', ' ') : '');
+    lines.push([staffName(x), toISODate(new Date(x.clock_in)), SHIFT_LABELS[x.shift_key] || '', fmt(x.clock_in), fmt(x.clock_out) || 'STILL CLOCKED IN',
+      brk, st.over, st.paidOver, Math.round(st.unpaid), (st.worked / 60).toFixed(2), x.adjusted_at ? 'Yes' : 'No'].map(csvCell).join(','));
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `timesheet_${state.timeFrom}_to_${state.timeTo}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 async function renderTime() {
   const el = document.getElementById('view-time');
+  if (!state.timeFrom) state.timeFrom = toISODate(addDays(new Date(), -13));
+  if (!state.timeTo) state.timeTo = toISODate(new Date());
   await loadTimeEntries();
   const cs = state.clockSettings;
 
@@ -2179,10 +2304,10 @@ async function renderTime() {
       <button class="btn-remove" data-action="brk-remove" data-i="${i}">✕</button>
     </div>`).join('');
 
+  const list = filteredEntries();
   const totals = {};
-  const rows = state.timeEntries.map((x) => {
-    const s = state.staff.find((m) => m.id === x.staff_member_id);
-    const name = s ? s.name : 'Unknown';
+  const rows = list.map((x) => {
+    const name = staffName(x);
     const st = entryStats(x);
     totals[name] = (totals[name] || 0) + st.worked;
     return `<tr>
@@ -2195,28 +2320,45 @@ async function renderTime() {
     </tr>`;
   }).join('');
   const totalRows = Object.keys(totals).sort().map((n) => `<div class="shift-row"><div class="shift-home">${esc(n)}</div><div class="shift-slots"><span class="filled">${fmtDur(totals[n])}</span></div></div>`).join('');
+  const staffOpts = `<option value="">All staff</option>` + state.staff.map((m) => `<option value="${m.id}" ${m.id === state.timeStaff ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
 
   el.innerHTML = `
-    <h3 class="section-title" style="margin-top:0;">Settings — Shift Times & Breaks</h3>
-    <section class="card">
-      <p>Tello speaks to caregivers 5 minutes before each shift starts and ends, based on these times. Saved automatically.</p>
-      ${shiftRows}
-      <h4 class="sub">Breaks (apply to every shift, in this order)</h4>
-      ${breakRows || '<div class="muted">No breaks set.</div>'}
-      <button class="btn-outline small" data-action="brk-add">+ Add break</button>
-      <p class="muted" style="margin-top:10px;">Unpaid breaks are deducted at their actual length. Paid-break overage is flagged for you to review, never deducted automatically. Have your payroll or labor advisor confirm the break rules.</p>
-    </section>
+    <div class="no-print">
+      <div class="card-header-row"><h3 class="section-title" style="margin:0;">On the Clock Now</h3><button class="btn-outline small" data-action="oc-refresh">Refresh</button></div>
+      <section class="card" id="onClockBox">${onClockHtml()}</section>
+      <div id="alertBox">${alertsHtml()}</div>
+    </div>
 
-    <h3 class="section-title">Timesheets — Last 14 Days</h3>
+    <h3 class="section-title">Timesheets</h3>
+    <div class="print-only"><h3>Timesheets ${esc(state.timeFrom)} to ${esc(state.timeTo)}${state.timeStaff ? ' — ' + esc((state.staff.find((m) => m.id === state.timeStaff) || {}).name || '') : ''}</h3></div>
     <section class="card" style="overflow-x:auto;">
-      ${rows ? `<table class="ts-table"><thead><tr><th>Staff</th><th>Shift</th><th>In</th><th>Out</th><th>Breaks</th><th>Worked</th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="muted">No time entries yet.</div>`}
-      <p class="muted" style="margin-top:10px;">Edit a time to correct it. The original in/out is kept.</p>
+      <div class="inline-form no-print">
+        <input type="date" data-kind="ts-from" value="${state.timeFrom}" />
+        <input type="date" data-kind="ts-to" value="${state.timeTo}" />
+        <select data-kind="ts-staff">${staffOpts}</select>
+        <button class="btn-outline" data-action="ts-export">Export CSV</button>
+        <button class="btn-outline" data-action="print">🖨 Print</button>
+      </div>
+      ${rows ? `<table class="ts-table"><thead><tr><th>Staff</th><th>Shift</th><th>In</th><th>Out</th><th>Breaks</th><th>Worked</th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="muted">No time entries in this range.</div>`}
+      <p class="muted no-print" style="margin-top:10px;">Edit a time to correct it. The original in/out is kept. Showing up to 1,000 entries.</p>
     </section>
-    ${totalRows ? `<h3 class="section-title">Totals — Last 14 Days</h3><section class="card">${totalRows}</section>` : ''}`;
+    ${totalRows ? `<h3 class="section-title">Totals</h3><section class="card">${totalRows}</section>` : ''}
+
+    <div class="no-print">
+      <h3 class="section-title">Settings — Shift Times & Breaks</h3>
+      <section class="card">
+        <p>Tello speaks to caregivers 5 minutes before each shift starts and ends, based on these times. Saved automatically.</p>
+        ${shiftRows}
+        <h4 class="sub">Breaks (apply to every shift, in this order)</h4>
+        ${breakRows || '<div class="muted">No breaks set.</div>'}
+        <button class="btn-outline small" data-action="brk-add">+ Add break</button>
+        <p class="muted" style="margin-top:10px;">Unpaid breaks are deducted at their actual length. Paid-break overage is flagged for you to review, never deducted automatically. Have your payroll or labor advisor confirm the break rules.</p>
+      </section>
+    </div>`;
 }
 
 async function adjustEntry(id, field, value) {
-  const x = state.timeEntries.find((t) => t.id === id);
+  const x = state.timeEntries.find((t) => t.id === id) || state.openAll.find((t) => t.id === id);
   if (!x || !value) return;
   const iso = new Date(value).toISOString();
   const patch = {
@@ -2346,6 +2488,21 @@ function onGlobalClick(e) {
     case 'break-end':
       breakEnd();
       break;
+    case 'oc-refresh':
+      refreshOnClock();
+      break;
+    case 'ts-export':
+      exportTimesheetCsv();
+      break;
+    case 'force-out': {
+      const x = state.openAll.find((t) => t.id === btn.dataset.id);
+      if (!x) break;
+      const at = new Date(btn.dataset.at);
+      if (window.confirm(`Set ${staffName(x)}'s clock-out to ${fmtClockTime(at)}? Confirm this is the real time with them.`)) {
+        adjustEntry(x.id, 'clock_out', toLocalInput(at));
+      }
+      break;
+    }
     case 'brk-add':
       state.clockSettings.breaks.push({ label: 'Rest break', minutes: 10, paid: true });
       saveClockSettings();
@@ -2425,6 +2582,9 @@ function onGlobalChange(e) {
     setCellValue(t.dataset, t.value);
     return;
   }
+  if (t.dataset.kind === 'ts-from') { if (t.value) { state.timeFrom = t.value; renderTime(); } return; }
+  if (t.dataset.kind === 'ts-to') { if (t.value) { state.timeTo = t.value; renderTime(); } return; }
+  if (t.dataset.kind === 'ts-staff') { state.timeStaff = t.value; renderTime(); return; }
   if (t.dataset.kind === 'shift-start' || t.dataset.kind === 'shift-end') {
     if (!t.value) return;
     state.clockSettings.shifts[t.dataset.shift][t.dataset.kind === 'shift-start' ? 'start' : 'end'] = t.value;
