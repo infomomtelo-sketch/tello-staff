@@ -431,6 +431,29 @@
   .chat-input-bar { display: flex; gap: 8px; }
   .chat-input-bar input { flex: 1; }
 
+  /* ---------- Time clock ---------- */
+  input[type="number"], input[type="datetime-local"] {
+    background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px 10px; font-size: 14px;
+  }
+  input[type="number"]:focus, input[type="datetime-local"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .clock-status { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+  .clock-big { font-size: 28px; font-weight: 800; color: var(--accent); margin: 6px 0 12px; }
+  .clock-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .clock-actions .btn-primary, .clock-actions .btn-outline { padding: 12px 18px; font-size: 15px; }
+  .tello-say { border-left: 3px solid var(--accent); padding: 8px 12px; margin-top: 12px; font-size: 14px; line-height: 1.45; background: var(--bg-input); border-radius: 0 8px 8px 0; }
+  .voice-note { font-size: 12px; color: var(--accent); margin-bottom: 10px; }
+  .ts-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .ts-table th, .ts-table td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .ts-table th { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .ts-table input[type="datetime-local"] { width: 100%; min-width: 150px; padding: 6px; font-size: 12px; }
+  .flag-over { color: var(--danger); font-weight: 700; }
+  .set-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .set-row .set-label { min-width: 110px; font-weight: 700; }
+  .set-row input[type="text"] { flex: 1; min-width: 110px; }
+  .set-row input[type="number"] { width: 70px; }
+  .set-row label { font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
+
   @media (max-width: 600px) {
     .app-main { padding: 12px; padding-bottom: 90px; }
     .week-label { order: -1; width: 100%; }
@@ -493,6 +516,10 @@
     <div id="view-chat" class="view"></div>
 
     <div id="view-dayoff" class="view"></div>
+
+    <div id="view-clock" class="view"></div>
+
+    <div id="view-time" class="view"></div>
   </main>
 
   <nav class="bottom-nav no-print">
@@ -510,6 +537,12 @@
     </button>
     <button class="nav-btn" data-action="nav-tab" data-tab="dayoff" data-role="caregiver">
       <span class="nav-icon">📋</span><span>Day Off</span>
+    </button>
+    <button class="nav-btn" data-action="nav-tab" data-tab="clock" data-role="caregiver">
+      <span class="nav-icon">⏱️</span><span>Clock</span>
+    </button>
+    <button class="nav-btn" data-action="nav-tab" data-tab="time" data-role="admin">
+      <span class="nav-icon">⏱️</span><span>Time</span>
     </button>
   </nav>
 </div>
@@ -558,6 +591,12 @@ const state = {
   staff: [],
   staffLoginFormId: null,
   dayOffRequests: [],
+  clockSettings: null,
+  timeEntries: [],
+  openEntry: null,
+  clockMsg: '',
+  voiceReady: false,
+  myShiftsToday: [],
 };
 
 function isAdmin() { return state.role === 'admin'; }
@@ -565,6 +604,7 @@ function isAdmin() { return state.role === 'admin'; }
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 let appEntered = false;
+let clockTimer = null;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -690,6 +730,10 @@ function showAuthScreen() {
   state.staff = [];
   state.staffLoginFormId = null;
   state.dayOffRequests = [];
+  state.timeEntries = [];
+  state.openEntry = null;
+  state.clockMsg = '';
+  if (clockTimer) { clearInterval(clockTimer); clockTimer = null; }
   appEntered = false;
   document.getElementById('authScreen').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
@@ -709,6 +753,11 @@ async function enterApp(user) {
     await loadReminders();
     await loadBirthdays();
     await loadChatMessages();
+    if (!isAdmin()) {
+      await loadTimeEntries();
+      if (!clockTimer) clockTimer = setInterval(clockTick, 15000);
+      clockTick();
+    }
   }
   renderApp();
 }
@@ -742,8 +791,10 @@ async function loadConfig() {
       homes: (data.homes && data.homes.length) ? data.homes : defaultConfig().homes,
       relievers: (data.relievers && data.relievers.length) ? data.relievers : defaultConfig().relievers,
     };
+    state.clockSettings = mergeClockSettings(data.clock_settings);
   } else {
     state.config = defaultConfig();
+    state.clockSettings = mergeClockSettings(null);
     await saveConfig();
   }
 }
@@ -1140,7 +1191,7 @@ async function clearChatHistory() {
 // ---------------------------------------------------------------------------
 // Render — app shell
 // ---------------------------------------------------------------------------
-const ADMIN_ONLY_TABS = ['staff', 'chat'];
+const ADMIN_ONLY_TABS = ['staff', 'chat', 'time'];
 
 function applyRoleUI() {
   document.getElementById('roleBadge').style.display = isAdmin() ? 'none' : '';
@@ -1156,6 +1207,8 @@ function renderCurrentTab() {
   if (state.tab === 'staff') renderStaff();
   if (state.tab === 'dayoff') renderDayOff();
   if (state.tab === 'chat') renderGapResolver();
+  if (state.tab === 'clock') renderClock();
+  if (state.tab === 'time') renderTime();
 }
 
 function renderApp() {
@@ -1781,6 +1834,398 @@ function renderChat() {
 }
 
 // ---------------------------------------------------------------------------
+// Time clock — shift times, clock in/out, breaks, Tello voice
+// ---------------------------------------------------------------------------
+const SHIFT_KEYS = ['cg1', 'cg2', 'night', 'reliever'];
+const SHIFT_LABELS = { cg1: 'Caregiver 1', cg2: 'Caregiver 2', night: 'Night Shift', reliever: 'Reliever' };
+
+// Placeholder defaults only — the admin sets the real shift times and break
+// rules in the Time tab. Breaks apply to every shift, in the order listed.
+function defaultClockSettings() {
+  return {
+    shifts: {
+      cg1: { start: '07:00', end: '15:00' },
+      cg2: { start: '15:00', end: '23:00' },
+      night: { start: '23:00', end: '07:00' },
+      reliever: { start: '07:00', end: '15:00' },
+    },
+    breaks: [
+      { label: 'Rest break', minutes: 10, paid: true },
+      { label: 'Rest break', minutes: 10, paid: true },
+      { label: 'Meal break', minutes: 30, paid: false },
+    ],
+  };
+}
+
+function mergeClockSettings(raw) {
+  const d = defaultClockSettings();
+  if (raw && raw.shifts) SHIFT_KEYS.forEach((k) => { if (raw.shifts[k]) d.shifts[k] = { ...d.shifts[k], ...raw.shifts[k] }; });
+  if (raw && Array.isArray(raw.breaks)) d.breaks = raw.breaks;
+  return d;
+}
+
+async function saveClockSettings() {
+  if (!isAdmin()) return;
+  const { error } = await sb.from('tello_staff_config')
+    .update({ clock_settings: state.clockSettings }).eq('user_id', state.orgId);
+  if (error) { console.error(error); alert('Could not save time settings (has schema_v4.sql been run?): ' + error.message); }
+}
+
+function atTime(base, hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const d = new Date(base);
+  d.setHours(h, m, 0, 0);
+  return d;
+}
+// First moment after `after` when the clock reads hhmm (handles night shifts).
+function nextOccurrence(after, hhmm) {
+  let d = atTime(after, hhmm);
+  if (d <= after) d = addDays(d, 1);
+  return d;
+}
+function fmt12(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+function fmtClockTime(d) {
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+function fmtDur(min) {
+  min = Math.max(0, Math.round(min));
+  const h = Math.floor(min / 60), m = min % 60;
+  const hp = h ? `${h} hour${h === 1 ? '' : 's'}` : '';
+  const mp = `${m} minute${m === 1 ? '' : 's'}`;
+  return h ? (m ? `${hp} ${mp}` : hp) : mp;
+}
+function toLocalInput(d) {
+  const x = new Date(d);
+  return `${toISODate(x)}T${String(x.getHours()).padStart(2, '0')}:${String(x.getMinutes()).padStart(2, '0')}`;
+}
+
+// Hours math. Unpaid breaks are deducted at their ACTUAL length. Paid-break
+// overage is only flagged (paidOver) — whether to deduct it is the admin's call.
+function entryStats(e, now = new Date()) {
+  const inAt = new Date(e.clock_in);
+  const outAt = e.clock_out ? new Date(e.clock_out) : now;
+  const span = Math.max(0, (outAt - inAt) / 60000);
+  let unpaid = 0, over = 0, paidOver = 0;
+  (e.breaks || []).forEach((b) => {
+    const s = new Date(b.start);
+    const en = b.end ? new Date(b.end) : now;
+    const actual = Math.max(0, (en - s) / 60000);
+    if (!b.paid) unpaid += actual;
+    const o = Math.round(actual - (b.allowed || 0));
+    if (o >= 1) { over += o; if (b.paid) paidOver += o; }
+  });
+  return { span, unpaid, over, paidOver, worked: Math.max(0, span - unpaid) };
+}
+function openBreak(e) {
+  const b = (e.breaks || [])[(e.breaks || []).length - 1];
+  return b && !b.end ? b : null;
+}
+
+// ---- Data ----
+async function loadTimeEntries() {
+  const since = addDays(new Date(), -14).toISOString();
+  let q = sb.from('tello_staff_time_entries').select('*').gte('clock_in', since).order('clock_in', { ascending: false });
+  if (!isAdmin()) q = q.eq('user_id', state.user.id);
+  const { data, error } = await q;
+  if (error) { console.error(error); state.timeEntries = []; return; }
+  state.timeEntries = data || [];
+  if (!isAdmin()) {
+    // The open entry may be older than the 14-day window (forgot to clock out).
+    const open = await sb.from('tello_staff_time_entries').select('*')
+      .eq('user_id', state.user.id).is('clock_out', null).maybeSingle();
+    state.openEntry = open.data || null;
+    if (state.openEntry && !state.timeEntries.find((x) => x.id === state.openEntry.id)) state.timeEntries.unshift(state.openEntry);
+  }
+}
+
+async function patchEntry(id, patch) {
+  const { data, error } = await sb.from('tello_staff_time_entries').update(patch).eq('id', id).select().single();
+  if (error) { console.error(error); alert('Could not save: ' + error.message); return null; }
+  state.timeEntries = state.timeEntries.map((x) => (x.id === id ? data : x));
+  if (state.openEntry && state.openEntry.id === id) state.openEntry = data.clock_out ? null : data;
+  return data;
+}
+
+// ---- Tello voice (browser speech; works only while this app is open) ----
+function unlockVoice() {
+  if (state.voiceReady) return;
+  state.voiceReady = true;
+  try { if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch (e) { /* ignore */ }
+  const n = document.getElementById('voiceNote');
+  if (n) n.style.display = 'none';
+}
+
+function telloSay(text, speak = true) {
+  state.clockMsg = text;
+  const m = document.getElementById('clockMsg');
+  if (m) { m.textContent = text; m.style.display = ''; }
+  if (!speak || !('speechSynthesis' in window)) return;
+  try {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-US';
+    u.rate = 0.95;
+    window.speechSynthesis.speak(u);
+  } catch (e) { console.error(e); }
+}
+
+function sayOnce(key, text) {
+  let done = {};
+  try { done = JSON.parse(localStorage.getItem('tello_clock_said') || '{}'); } catch (e) { /* ignore */ }
+  if (done[key]) return;
+  done[key] = Date.now();
+  Object.keys(done).forEach((k) => { if (Date.now() - done[k] > 3 * 86400000) delete done[k]; });
+  try { localStorage.setItem('tello_clock_said', JSON.stringify(done)); } catch (e) { /* ignore */ }
+  telloSay(text);
+}
+
+function breaksSpoken() {
+  const list = state.clockSettings.breaks;
+  if (!list.length) return '';
+  return 'Your breaks today: ' + list.map((b) => `${b.label}, ${b.minutes} minutes, ${b.paid ? 'paid' : 'unpaid'}`).join('. ') + '.';
+}
+
+async function myShiftsToday() {
+  const me = state.staff.find((s) => s.id === state.staffMemberId);
+  if (!me) return [];
+  const now = new Date();
+  if (approvedDayOffSet().has(`${toISODate(now)}|${me.name}`)) return [];
+  const a = await loadWeek(toISODate(startOfWeek(now)));
+  const dayKey = DAY_KEYS[(now.getDay() + 6) % 7];
+  const keys = [];
+  state.config.homes.forEach((home) => {
+    const dayData = ((a.homes || {})[home.id] || {})[dayKey] || {};
+    ['cg1', 'cg2', 'night'].forEach((k) => { if (dayData[k] === me.name && !keys.includes(k)) keys.push(k); });
+  });
+  state.config.relievers.forEach((r) => {
+    const cell = relieverCellData(((a.relievers || {})[r.id] || {})[dayKey]);
+    if (cell.name === me.name && !keys.includes('reliever')) keys.push('reliever');
+  });
+  return keys;
+}
+
+async function clockTick() {
+  if (isAdmin() || !state.user || !state.clockSettings) return;
+  const now = new Date();
+  const e = state.openEntry;
+  const first = (() => { const me = state.staff.find((s) => s.id === state.staffMemberId); return me ? me.name.split(' ')[0] : ''; })();
+  if (e) {
+    const ob = openBreak(e);
+    if (ob && ob.allowed > 0 && (now - new Date(ob.start)) / 60000 >= ob.allowed) {
+      sayOnce(`bu:${e.id}:${e.breaks.length}`, `Your ${ob.allowed} minute ${ob.label.toLowerCase()} is up. Please return to work and tap End break.`);
+    }
+    const sh = state.clockSettings.shifts[e.shift_key];
+    if (sh) {
+      const endAt = nextOccurrence(new Date(e.clock_in), sh.end);
+      if (now >= new Date(endAt - 5 * 60000) && now < new Date(+endAt + 30 * 60000)) {
+        const st = entryStats(e, now);
+        sayOnce(`out:${e.id}`, `${first ? first + ', your' : 'Your'} shift ends at ${fmt12(sh.end)}. So far you have worked ${fmtDur(st.worked)}. Thank you for today, take care, and please remember to clock out.`);
+      }
+    }
+  } else {
+    (await myShiftsToday()).forEach((key) => {
+      const sh = state.clockSettings.shifts[key];
+      if (!sh) return;
+      const startAt = atTime(now, sh.start);
+      if (now >= new Date(startAt - 5 * 60000) && now < new Date(+startAt + 15 * 60000)) {
+        const h = now.getHours();
+        const g = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+        sayOnce(`in:${toISODate(now)}:${key}`, `${g}${first ? ', ' + first : ''}. Your ${SHIFT_LABELS[key]} starts at ${fmt12(sh.start)}. ${breaksSpoken()} Please clock in when you arrive.`);
+      }
+    });
+  }
+  const el = document.getElementById('clockElapsed');
+  if (el && state.openEntry) el.textContent = fmtDur(entryStats(state.openEntry).worked);
+}
+
+// ---- Caregiver actions ----
+async function clockIn(shiftKey) {
+  if (state.openEntry) return;
+  if (!state.staffMemberId) { alert('Your login is not linked to a staff profile yet — ask your admin.'); return; }
+  const { data, error } = await sb.from('tello_staff_time_entries').insert({
+    owner_id: state.orgId, user_id: state.user.id, staff_member_id: state.staffMemberId,
+    shift_key: shiftKey || null, clock_in: new Date().toISOString(), breaks: [],
+  }).select().single();
+  if (error) { console.error(error); alert('Could not clock in: ' + error.message); return; }
+  state.openEntry = data;
+  state.timeEntries.unshift(data);
+  state.clockMsg = `Clocked in at ${fmtClockTime(new Date(data.clock_in))}.`;
+  renderClock();
+}
+
+async function breakStart() {
+  const e = state.openEntry;
+  if (!e || openBreak(e)) return;
+  const def = state.clockSettings.breaks[(e.breaks || []).length];
+  if (!def) return;
+  const breaks = [...(e.breaks || []), { label: def.label, allowed: def.minutes, paid: def.paid, start: new Date().toISOString() }];
+  if (await patchEntry(e.id, { breaks })) {
+    telloSay(`${def.label} started. You have ${def.minutes} minutes.`);
+    renderClock();
+  }
+}
+
+async function breakEnd() {
+  const e = state.openEntry;
+  const ob = e && openBreak(e);
+  if (!ob) return;
+  const endIso = new Date().toISOString();
+  const breaks = e.breaks.map((b) => (b === ob ? { ...b, end: endIso } : b));
+  const actual = (new Date(endIso) - new Date(ob.start)) / 60000;
+  const over = Math.round(actual - ob.allowed);
+  if (await patchEntry(e.id, { breaks })) {
+    telloSay(over >= 1
+      ? `Welcome back. Your ${ob.label.toLowerCase()} was ${Math.round(actual)} minutes, ${over} over the ${ob.allowed} allowed. That is recorded on your timesheet.`
+      : 'Welcome back.');
+    renderClock();
+  }
+}
+
+async function clockOut() {
+  const e = state.openEntry;
+  if (!e) return;
+  if (openBreak(e)) { alert('End your break first, then clock out.'); return; }
+  const outIso = new Date().toISOString();
+  const saved = await patchEntry(e.id, { clock_out: outIso });
+  if (saved) {
+    const st = entryStats(saved);
+    telloSay(`Clocked out at ${fmtClockTime(new Date(outIso))}. Total recorded: ${fmtDur(st.worked)}.`, false);
+    renderClock();
+  }
+}
+
+// ---- Render: caregiver Clock tab ----
+async function renderClock() {
+  const el = document.getElementById('view-clock');
+  const me = state.staff.find((s) => s.id === state.staffMemberId);
+  if (!me) {
+    el.innerHTML = `<div class="card"><h3>Clock</h3><p>Your staff profile isn't linked to your login yet — ask your admin to finish setting it up in the Staff tab.</p></div>`;
+    return;
+  }
+  const cs = state.clockSettings;
+  const e = state.openEntry;
+  const scheduled = await myShiftsToday();
+  const voiceNote = state.voiceReady || !('speechSynthesis' in window) ? '' :
+    `<div class="voice-note" id="voiceNote">🔊 Tap anywhere once so Tello can speak. Tello only speaks while this app is open.</div>`;
+
+  let body;
+  if (!e) {
+    const opts = SHIFT_KEYS.map((k) => `<option value="${k}" ${k === scheduled[0] ? 'selected' : ''}>${SHIFT_LABELS[k]} (${fmt12(cs.shifts[k].start)}–${fmt12(cs.shifts[k].end)})${scheduled.includes(k) ? ' — scheduled today' : ''}</option>`).join('');
+    body = `
+      <div class="clock-status">Not clocked in</div>
+      <p>${scheduled.length ? `Scheduled today: ${scheduled.map((k) => SHIFT_LABELS[k]).join(', ')}.` : 'You are not on the schedule today.'}</p>
+      <select id="clockShift">${opts}</select>
+      <div class="clock-actions"><button class="btn-primary" data-action="clock-in">Clock In</button></div>`;
+  } else {
+    const ob = openBreak(e);
+    const nextDef = cs.breaks[(e.breaks || []).length];
+    const sh = SHIFT_LABELS[e.shift_key] || 'Shift';
+    const brks = (e.breaks || []).map((b) => {
+      const act = Math.round(((b.end ? new Date(b.end) : new Date()) - new Date(b.start)) / 60000);
+      const o = act - b.allowed;
+      return `<div class="muted">${esc(b.label)} · ${fmtClockTime(new Date(b.start))}${b.end ? '–' + fmtClockTime(new Date(b.end)) : ' (in progress)'} · ${act} of ${b.allowed} min${o >= 1 && b.end ? ` · <span class="flag-over">${o} over</span>` : ''}</div>`;
+    }).join('');
+    body = `
+      <div class="clock-status">On the clock — ${esc(sh)}</div>
+      <p>Since ${fmtClockTime(new Date(e.clock_in))}. Worked so far:</p>
+      <div class="clock-big" id="clockElapsed">${fmtDur(entryStats(e).worked)}</div>
+      ${brks}
+      <div class="clock-actions">
+        ${ob ? `<button class="btn-primary" data-action="break-end">End ${esc(ob.label)}</button>`
+          : nextDef ? `<button class="btn-outline" data-action="break-start">Start ${esc(nextDef.label)} (${nextDef.minutes} min, ${nextDef.paid ? 'paid' : 'unpaid'})</button>` : ''}
+        <button class="btn-primary" data-action="clock-out">Clock Out</button>
+      </div>`;
+  }
+
+  const recent = state.timeEntries.filter((x) => x.clock_out).slice(0, 7).map((x) => {
+    const st = entryStats(x);
+    return `<div class="shift-row"><div class="shift-home">${fmtShort(new Date(x.clock_in))}</div><div class="shift-slots"><span>${fmtClockTime(new Date(x.clock_in))} – ${fmtClockTime(new Date(x.clock_out))}</span><span class="filled">${fmtDur(st.worked)}</span>${st.over ? `<span class="flag-over">breaks ${st.over} min over</span>` : ''}</div></div>`;
+  }).join('');
+
+  el.innerHTML = `
+    ${voiceNote}
+    <section class="card">${body}
+      <div class="tello-say" id="clockMsg" style="${state.clockMsg ? '' : 'display:none'}">${esc(state.clockMsg)}</div>
+    </section>
+    <h3 class="section-title">My Recent Time</h3>
+    <section class="card">${recent || `<div class="muted">No completed shifts yet.</div>`}</section>
+    <p class="muted">Times are recorded from this device's clock. Your employer's payroll record is the official one.</p>`;
+}
+
+// ---- Render: admin Time tab (settings + timesheets) ----
+async function renderTime() {
+  const el = document.getElementById('view-time');
+  await loadTimeEntries();
+  const cs = state.clockSettings;
+
+  const shiftRows = SHIFT_KEYS.map((k) => `
+    <div class="set-row">
+      <span class="set-label">${SHIFT_LABELS[k]}</span>
+      <input type="time" data-kind="shift-start" data-shift="${k}" value="${cs.shifts[k].start}" />
+      <span class="muted">to</span>
+      <input type="time" data-kind="shift-end" data-shift="${k}" value="${cs.shifts[k].end}" />
+    </div>`).join('');
+  const breakRows = cs.breaks.map((b, i) => `
+    <div class="set-row">
+      <input type="text" data-kind="brk-label" data-i="${i}" value="${esc(b.label)}" />
+      <input type="number" min="1" max="120" data-kind="brk-min" data-i="${i}" value="${b.minutes}" /><span class="muted">min</span>
+      <label><input type="checkbox" data-kind="brk-paid" data-i="${i}" ${b.paid ? 'checked' : ''} /> Paid</label>
+      <button class="btn-remove" data-action="brk-remove" data-i="${i}">✕</button>
+    </div>`).join('');
+
+  const totals = {};
+  const rows = state.timeEntries.map((x) => {
+    const s = state.staff.find((m) => m.id === x.staff_member_id);
+    const name = s ? s.name : 'Unknown';
+    const st = entryStats(x);
+    totals[name] = (totals[name] || 0) + st.worked;
+    return `<tr>
+      <td>${esc(name)}</td>
+      <td>${esc(SHIFT_LABELS[x.shift_key] || '—')}</td>
+      <td><input type="datetime-local" data-kind="te-in" data-id="${x.id}" value="${toLocalInput(x.clock_in)}" /></td>
+      <td>${x.clock_out ? `<input type="datetime-local" data-kind="te-out" data-id="${x.id}" value="${toLocalInput(x.clock_out)}" />` : '<span class="filled">On the clock</span>'}</td>
+      <td>${(x.breaks || []).length}${st.over ? ` <span class="flag-over">⚠ ${st.over} min over${st.paidOver ? ` (${st.paidOver} paid — review)` : ''}</span>` : ''}</td>
+      <td>${fmtDur(st.worked)}${x.adjusted_at ? '<br><span class="muted">adjusted</span>' : ''}</td>
+    </tr>`;
+  }).join('');
+  const totalRows = Object.keys(totals).sort().map((n) => `<div class="shift-row"><div class="shift-home">${esc(n)}</div><div class="shift-slots"><span class="filled">${fmtDur(totals[n])}</span></div></div>`).join('');
+
+  el.innerHTML = `
+    <h3 class="section-title" style="margin-top:0;">Settings — Shift Times & Breaks</h3>
+    <section class="card">
+      <p>Tello speaks to caregivers 5 minutes before each shift starts and ends, based on these times. Saved automatically.</p>
+      ${shiftRows}
+      <h4 class="sub">Breaks (apply to every shift, in this order)</h4>
+      ${breakRows || '<div class="muted">No breaks set.</div>'}
+      <button class="btn-outline small" data-action="brk-add">+ Add break</button>
+      <p class="muted" style="margin-top:10px;">Unpaid breaks are deducted at their actual length. Paid-break overage is flagged for you to review, never deducted automatically. Have your payroll or labor advisor confirm the break rules.</p>
+    </section>
+
+    <h3 class="section-title">Timesheets — Last 14 Days</h3>
+    <section class="card" style="overflow-x:auto;">
+      ${rows ? `<table class="ts-table"><thead><tr><th>Staff</th><th>Shift</th><th>In</th><th>Out</th><th>Breaks</th><th>Worked</th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="muted">No time entries yet.</div>`}
+      <p class="muted" style="margin-top:10px;">Edit a time to correct it. The original in/out is kept.</p>
+    </section>
+    ${totalRows ? `<h3 class="section-title">Totals — Last 14 Days</h3><section class="card">${totalRows}</section>` : ''}`;
+}
+
+async function adjustEntry(id, field, value) {
+  const x = state.timeEntries.find((t) => t.id === id);
+  if (!x || !value) return;
+  const iso = new Date(value).toISOString();
+  const patch = {
+    [field]: iso,
+    adjusted_by: state.user.id,
+    adjusted_at: new Date().toISOString(),
+    orig_clock_in: x.orig_clock_in || x.clock_in,
+    orig_clock_out: x.orig_clock_out || x.clock_out,
+  };
+  if (await patchEntry(id, patch)) renderTime();
+}
+
+// ---------------------------------------------------------------------------
 // Event delegation
 // ---------------------------------------------------------------------------
 function onGlobalClick(e) {
@@ -1883,6 +2328,30 @@ function onGlobalClick(e) {
     case 'clear-chat':
       clearChatHistory();
       break;
+    case 'clock-in': {
+      const sel = document.getElementById('clockShift');
+      clockIn(sel ? sel.value : null);
+      break;
+    }
+    case 'clock-out':
+      clockOut();
+      break;
+    case 'break-start':
+      breakStart();
+      break;
+    case 'break-end':
+      breakEnd();
+      break;
+    case 'brk-add':
+      state.clockSettings.breaks.push({ label: 'Rest break', minutes: 10, paid: true });
+      saveClockSettings();
+      renderTime();
+      break;
+    case 'brk-remove':
+      state.clockSettings.breaks.splice(Number(btn.dataset.i), 1);
+      saveClockSettings();
+      renderTime();
+      break;
   }
 }
 
@@ -1952,6 +2421,32 @@ function onGlobalChange(e) {
     setCellValue(t.dataset, t.value);
     return;
   }
+  if (t.dataset.kind === 'shift-start' || t.dataset.kind === 'shift-end') {
+    if (!t.value) return;
+    state.clockSettings.shifts[t.dataset.shift][t.dataset.kind === 'shift-start' ? 'start' : 'end'] = t.value;
+    saveClockSettings();
+    return;
+  } else if (t.dataset.kind === 'brk-label') {
+    state.clockSettings.breaks[Number(t.dataset.i)].label = t.value.trim() || 'Break';
+    saveClockSettings();
+    return;
+  } else if (t.dataset.kind === 'brk-min') {
+    const n = Math.max(1, Math.min(120, Number(t.value) || 10));
+    state.clockSettings.breaks[Number(t.dataset.i)].minutes = n;
+    saveClockSettings();
+    renderTime();
+    return;
+  } else if (t.dataset.kind === 'brk-paid') {
+    state.clockSettings.breaks[Number(t.dataset.i)].paid = t.checked;
+    saveClockSettings();
+    return;
+  } else if (t.dataset.kind === 'te-in') {
+    adjustEntry(t.dataset.id, 'clock_in', t.value);
+    return;
+  } else if (t.dataset.kind === 'te-out') {
+    adjustEntry(t.dataset.id, 'clock_out', t.value);
+    return;
+  }
   if (t.dataset.kind === 'reminder-done') {
     toggleReminder(t.dataset.id, t.checked);
   } else if (t.dataset.kind === 'home-name') {
@@ -1985,6 +2480,7 @@ function init() {
   document.addEventListener('click', onGlobalClick);
   document.addEventListener('submit', onGlobalSubmit);
   document.addEventListener('change', onGlobalChange);
+  document.addEventListener('pointerdown', unlockVoice);
 
   sb.auth.onAuthStateChange((_event, session) => {
     if (session && session.user) enterApp(session.user);
