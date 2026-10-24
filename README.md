@@ -196,3 +196,13 @@ needed for day-to-day coverage questions.
 - Chat has no Staff directory to draw on yet (that's a future session), so it
   only knows names as they appear typed into the Schedule Board.
   grid, same as homes — pick or type who's deployed into any cell.
+
+
+## Time clock (Clock tab for caregivers, Time tab for admins)
+
+- **Run `schema_v4.sql` first** (adds `tello_staff_time_entries` and `tello_staff_config.clock_settings`).
+- **Admin → Time tab**: set each shift's start/end and the break list (label, minutes, paid/unpaid). No on/off toggles — Tello's reminders always follow these times. Timesheets for the last 14 days with per-person totals; editing an in/out time keeps the original.
+- **Caregiver → Clock tab**: Clock In (shift pre-selected from the Schedule Board), Start/End break, Clock Out.
+- **Tello speaks** (browser speech, only while the app is open and after one tap on the screen): 5 min before shift start (greeting + the day's breaks), when a break's allowed time is up, on return from a break (states any overage, no instruction to shorten the next break), and 5 min before shift end (hours worked so far + goodbye + clock-out reminder).
+- **Hours**: unpaid breaks are deducted at actual length. Paid-break overage is flagged for the admin, never auto-deducted.
+- Times come from the device clock. The employer's payroll record is the official one.
