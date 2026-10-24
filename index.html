@@ -2142,9 +2142,26 @@ async function renderClock() {
       </div>`;
   }
 
-  const recent = state.timeEntries.filter((x) => x.clock_out).slice(0, 7).map((x) => {
-    const st = entryStats(x);
-    return `<div class="shift-row"><div class="shift-home">${fmtShort(new Date(x.clock_in))}</div><div class="shift-slots"><span>${fmtClockTime(new Date(x.clock_in))} – ${fmtClockTime(new Date(x.clock_out))}</span><span class="filled">${fmtDur(st.worked)}</span>${st.over ? `<span class="flag-over">breaks ${st.over} min over</span>` : ''}</div></div>`;
+  const done = state.timeEntries.filter((x) => x.clock_out);
+  const weeks = {};
+  done.forEach((x) => {
+    const wk = toISODate(startOfWeek(new Date(x.clock_in)));
+    (weeks[wk] = weeks[wk] || []).push(x);
+  });
+  const recent = Object.keys(weeks).sort().reverse().map((wk) => {
+    const list = weeks[wk];
+    const total = list.reduce((sum, x) => sum + entryStats(x).worked, 0);
+    const wkStart = new Date(wk + 'T00:00:00');
+    const rows = list.map((x) => {
+      const st = entryStats(x);
+      const brk = (x.breaks || []).filter((b) => b.end).map((b) => {
+        const act = Math.round((new Date(b.end) - new Date(b.start)) / 60000);
+        const o = act - b.allowed;
+        return `${esc(b.label)} ${act}/${b.allowed} min${o >= 1 ? ` <span class="flag-over">(${o} over)</span>` : ''}`;
+      }).join(' · ');
+      return `<div class="shift-row"><div class="shift-home">${x.adjusted_at ? '✎ ' : ''}${new Date(x.clock_in).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</div><div class="shift-slots"><span>${fmtClockTime(new Date(x.clock_in))} – ${fmtClockTime(new Date(x.clock_out))}</span><span class="filled">${fmtDur(st.worked)}</span></div>${brk ? `<div class="muted" style="width:100%;">${brk}</div>` : ''}</div>`;
+    }).join('');
+    return `<h4 class="sub">Week of ${fmtShort(wkStart)} — total ${fmtDur(total)}</h4>${rows}`;
   }).join('');
 
   el.innerHTML = `
@@ -2153,8 +2170,9 @@ async function renderClock() {
       <div class="tello-say" id="clockMsg" style="${state.clockMsg ? '' : 'display:none'}">${esc(state.clockMsg)}</div>
       <div class="tello-promo">Like Tello? See what Tello can do for your business at <a href="https://tello.live" target="_blank" rel="noopener">tello.live</a></div>
     </section>
-    <h3 class="section-title">My Recent Time</h3>
-    <section class="card">${recent || `<div class="muted">No completed shifts yet.</div>`}</section>
+    <h3 class="section-title">My Hours — Last 14 Days</h3>
+    <section class="card">${recent || `<div class="muted">No completed shifts yet.</div>`}
+      <p class="muted" style="margin-top:10px;">✎ = your admin corrected this entry. See something wrong? Tell your admin.</p></section>
     <p class="muted">Times are recorded from this device's clock. Your employer's payroll record is the official one.</p>`;
 }
 
