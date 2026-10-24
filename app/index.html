@@ -316,16 +316,46 @@
     flex-wrap: wrap;
     margin-bottom: 16px;
   }
-  .home-select {
+  .home-menu-wrap { position: relative; }
+  .home-menu-btn {
+    display: flex; align-items: center; gap: 8px;
     background: var(--bg-input);
     border: 1px solid var(--border);
     color: var(--text);
-    padding: 8px 10px;
-    border-radius: 8px;
-    font-size: 13px;
-    font-weight: 600;
-    max-width: 180px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    min-width: 130px;
+    max-width: 220px;
+    cursor: pointer;
   }
+  .home-menu-btn .hm-name { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .home-menu-btn .hm-caret { font-size: 11px; color: var(--text-muted); transition: transform 0.15s; }
+  .home-menu-wrap.open .hm-caret { transform: rotate(180deg); }
+  .home-menu-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .home-menu {
+    display: none;
+    position: absolute; top: calc(100% + 6px); left: 0;
+    min-width: 100%; width: max-content; max-width: min(280px, 86vw);
+    max-height: min(60vh, 420px); overflow-y: auto;
+    background: var(--bg-app);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 6px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+    z-index: 30;
+  }
+  .home-menu-wrap.open .home-menu { display: block; }
+  .home-menu-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    background: transparent; border: none; color: var(--text);
+    padding: 12px 12px; min-height: 44px;
+    border-radius: 10px; font-size: 15px; font-weight: 600; text-align: left; cursor: pointer;
+  }
+  .home-menu-item:hover, .home-menu-item:focus-visible { background: var(--bg-elevated); outline: none; }
+  .home-menu-item .hm-check { width: 18px; color: var(--accent); font-weight: 900; }
+  .home-menu-item.selected { color: var(--accent); }
   .view-toggle { display: flex; background: var(--bg-input); border-radius: 8px; padding: 3px; }
   .view-toggle button {
     background: transparent;
@@ -1877,9 +1907,14 @@ async function renderSchedule() {
   document.getElementById('view-schedule').innerHTML = `
     <div class="week-bar no-print">
       ${state.scheduleView !== 'day' ? `
-        <select class="home-select" data-kind="select-home">
-          ${state.config.homes.map((h) => `<option value="${h.id}" ${h.id === state.selectedHomeId ? 'selected' : ''}>${esc(h.name)}</option>`).join('')}
-        </select>` : ''}
+        <div class="home-menu-wrap">
+          <button type="button" class="home-menu-btn" data-action="home-menu-toggle" aria-haspopup="menu" aria-expanded="false">
+            <span class="hm-name">${esc((home && home.name) || 'Select home')}</span><span class="hm-caret">▼</span>
+          </button>
+          <div class="home-menu" role="menu">
+            ${state.config.homes.map((h) => `<button type="button" role="menuitemradio" aria-checked="${h.id === state.selectedHomeId}" class="home-menu-item ${h.id === state.selectedHomeId ? 'selected' : ''}" data-action="home-menu-pick" data-id="${h.id}"><span class="hm-check">${h.id === state.selectedHomeId ? '✓' : ''}</span><span>${esc(h.name)}</span></button>`).join('')}
+          </div>
+        </div>` : ''}
       <div class="view-toggle">
         <button data-action="view-week" class="${state.scheduleView === 'week' ? 'active' : ''}">Week</button>
         <button data-action="view-month" class="${state.scheduleView === 'month' ? 'active' : ''}">Month</button>
@@ -2415,11 +2450,31 @@ function renderStaff() {
 // ---------------------------------------------------------------------------
 // Event delegation
 // ---------------------------------------------------------------------------
+function closeHomeMenus() {
+  document.querySelectorAll('.home-menu-wrap.open').forEach((w) => {
+    w.classList.remove('open');
+    const b = w.querySelector('.home-menu-btn');
+    if (b) b.setAttribute('aria-expanded', 'false');
+  });
+}
+
 function onGlobalClick(e) {
+  if (!e.target.closest('.home-menu-wrap')) closeHomeMenus();
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
   const action = btn.dataset.action;
   switch (action) {
+    case 'home-menu-toggle': {
+      const w = btn.closest('.home-menu-wrap');
+      const willOpen = !w.classList.contains('open');
+      closeHomeMenus();
+      if (willOpen) { w.classList.add('open'); btn.setAttribute('aria-expanded', 'true'); }
+      break;
+    }
+    case 'home-menu-pick':
+      state.selectedHomeId = btn.dataset.id;
+      renderSchedule();
+      break;
     case 'nav-tab':
       state.tab = btn.dataset.tab;
       renderApp();
@@ -2672,7 +2727,7 @@ const TOUR_SEEN_KEY = 'tello-staff-tour-seen';
 const TOUR_STEPS = [
   { modal: true, title: 'Welcome to Tello Staff', body: "A one-minute tour of the basics. Skip anytime with the button below, or reopen this tour later from the ❓ button, top right." },
   { tab: 'schedule', view: 'week', selector: '.bottom-nav', title: 'Four tabs', body: 'Schedule is the roster. Today has a quote, reminders, birthdays, and a live shift summary. Staff is your directory. Chat lets you ask Tello questions about coverage.' },
-  { tab: 'schedule', view: 'week', selector: '.home-select', title: 'Pick a home', body: 'Everything below is scoped to one home at a time — switch which one you\'re looking at right here.' },
+  { tab: 'schedule', view: 'week', selector: '.home-menu-wrap', title: 'Pick a home', body: 'Everything below is scoped to one home at a time — switch which one you\'re looking at right here.' },
   { tab: 'schedule', view: 'week', selector: '.view-toggle', title: 'Week, Month, or All Homes', body: 'Week is for quick edits. Month shows the whole month at once, like the printed page on the wall. All Homes shows every home side by side for a single day.' },
   { tab: 'schedule', view: 'week', selector: '.schedule-grid', title: 'Just type it', body: 'No dropdowns — type names straight into Working and Day Off, same as the paper schedule. It saves on its own a moment after you stop typing: the box flashes green when it lands, or a red banner appears at the top if something goes wrong.' },
   { tab: 'schedule', view: 'week', selector: '[data-action="staff-panel-toggle"]', title: 'Drag names in', body: 'Opens a panel with every staff member as a tile — drag one straight onto any box instead of typing the name.' },
@@ -2769,6 +2824,7 @@ function maybeAutoStartTour() {
 
 function init() {
   document.addEventListener('click', onGlobalClick);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeHomeMenus(); });
   document.addEventListener('submit', onGlobalSubmit);
   document.addEventListener('input', onGlobalInput);
   document.addEventListener('change', onGlobalChange);
