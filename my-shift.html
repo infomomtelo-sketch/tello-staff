@@ -249,6 +249,12 @@ function fmtDur(min) {
   const mp = `${m} minute${m === 1 ? '' : 's'}`;
   return h ? (m ? `${hp} ${mp}` : hp) : mp;
 }
+// "1 hr 30 min", "10 min", "2 hr" — compact form for buttons and labels.
+function fmtShort(min) {
+  min = Math.max(0, Math.round(min));
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? (m ? `${h} hr ${m} min` : `${h} hr`) : `${m} min`;
+}
 function fmtHM(min) {
   min = Math.max(0, Math.round(min));
   return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`;
@@ -314,7 +320,7 @@ function sayOnce(key, text) {
 function breaksSpoken() {
   const b = (clock.data && clock.data.breaks) || [];
   if (!b.length) return '';
-  const parts = b.map((x) => `a ${x.minutes} minute ${x.label.toLowerCase()}${x.paid ? '' : ' (unpaid)'}`);
+  const parts = b.map((x) => `a ${fmtDur(x.minutes)} ${x.label.toLowerCase()}${x.paid ? '' : ' (unpaid)'}`);
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
   return `Remember your breaks today: ${list}.`;
 }
@@ -331,7 +337,7 @@ function voiceCheck() {
   if (e) {
     const ob = openBreakOf(e);
     if (ob && ob.allowed > 0 && (now - new Date(ob.start).getTime()) / 60000 >= ob.allowed) {
-      sayOnce(`bu:${e.id}:${e.breaks.length}`, `Your ${ob.allowed} minute ${ob.label.toLowerCase()} is up. Please tap End break when you are back.`);
+      sayOnce(`bu:${e.id}:${e.breaks.length}`, `Your ${fmtDur(ob.allowed)} ${ob.label.toLowerCase()} is up. Please tap End break when you are back.`);
     }
     const endIso = e.sched_end;
     if (endIso) {
@@ -414,13 +420,13 @@ function afterPunch(data, before) {
     telloSay(`Clocked in at ${fmtTime(data.open.clock_in)}. Have a great shift.`);
   } else if (data.notice === 'break_started' && data.open) {
     const b = data.open.breaks[data.open.breaks.length - 1];
-    telloSay(`${b.label} started. You have ${b.allowed} minutes.`);
+    telloSay(`${b.label} started. You have ${fmtDur(b.allowed)}.`);
   } else if (data.notice === 'break_ended' && data.open) {
     const b = data.open.breaks[data.open.breaks.length - 1];
     const actual = (new Date(b.end) - new Date(b.start)) / 60000;
     const over = Math.round(actual - b.allowed);
     telloSay(over >= 1
-      ? `Welcome back. Your ${b.label.toLowerCase()} was ${Math.round(actual)} minutes, ${over} over the ${b.allowed} allowed. That is recorded on your timesheet.`
+      ? `Welcome back. Your ${b.label.toLowerCase()} was ${fmtDur(actual)}, ${fmtDur(over)} over the ${fmtDur(b.allowed)} allowed. That is recorded on your timesheet.`
       : 'Welcome back.');
   } else if (data.notice === 'clocked_out') {
     const prev = before && before.open;
@@ -460,7 +466,7 @@ function renderClock() {
     actions = `<button type="button" class="clock-btn primary" data-punch="in" ${clock.busy ? 'disabled' : ''}>Clock In</button>`;
   } else if (ob) {
     status = `On ${esc(ob.label.toLowerCase())}`;
-    sub = `${ob.allowed} minutes allowed · ${ob.paid ? 'paid' : 'unpaid'}`;
+    sub = `${fmtShort(ob.allowed)} allowed · ${ob.paid ? 'paid' : 'unpaid'}`;
     body = `<div class="clock-timer" id="breakTimer">0:00:00</div><div class="clock-sub">break time so far</div>`;
     actions = `<button type="button" class="clock-btn primary" data-punch="break_end" ${clock.busy ? 'disabled' : ''}>End break</button>`;
   } else {
@@ -468,7 +474,7 @@ function renderClock() {
     sub = e.sched_end ? `Shift ends ${esc(fmtTime(e.sched_end))}` : 'No scheduled end time';
     body = `<div class="clock-timer" id="clockTimer">0:00:00</div><div class="clock-sub">worked so far (unpaid breaks taken out)</div>`;
     const def = d.breaks[(e.breaks || []).length];
-    if (def) actions += `<button type="button" class="clock-btn" data-punch="break_start" ${clock.busy ? 'disabled' : ''}>Start ${esc(def.label.toLowerCase())} (${def.minutes} min${def.paid ? '' : ', unpaid'})</button>`;
+    if (def) actions += `<button type="button" class="clock-btn" data-punch="break_start" ${clock.busy ? 'disabled' : ''}>Start ${esc(def.label.toLowerCase())} (${fmtShort(def.minutes)}${def.paid ? '' : ', unpaid'})</button>`;
     actions += `<button type="button" class="clock-btn danger" data-punch="out" ${clock.busy ? 'disabled' : ''}>Clock Out</button>`;
   }
   card.innerHTML = `
@@ -533,7 +539,7 @@ function renderHours() {
       if (e.adjusted_at) flags.push('Adjusted by admin');
       return `<div class="hours-row">
         <div><div>${esc(fmtDayLabel(day))}</div>
-          <div class="h-sub">${esc(fmtTime(e.clock_in))} – ${e.clock_out ? esc(fmtTime(e.clock_out)) : '…'}${st.unpaid ? ` · breaks −${Math.round(st.unpaid)}m` : ''}</div>
+          <div class="h-sub">${esc(fmtTime(e.clock_in))} – ${e.clock_out ? esc(fmtTime(e.clock_out)) : '…'}${st.unpaid ? ` · breaks −${fmtShort(st.unpaid)}` : ''}</div>
           ${flags.map((f) => `<div class="h-flag">${esc(f)}</div>`).join('')}</div>
         <div style="font-weight:700">${fmtHM(st.worked)}</div>
       </div>`;
