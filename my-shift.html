@@ -57,6 +57,42 @@
   .day-row .day-name { font-weight: 700; min-width: 70px; }
   .day-row .day-detail { color: var(--text-muted); text-align: right; }
   .day-row .day-detail.working { color: var(--text); font-weight: 600; }
+
+  /* ---- Clock card ---- */
+  .clock-card {
+    background: linear-gradient(135deg, var(--bg-card), var(--bg-elevated));
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 24px;
+    text-align: center;
+  }
+  .clock-card .clock-label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 6px; }
+  .clock-card .clock-status { font-size: 19px; font-weight: 800; }
+  .clock-card .clock-sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; }
+  .clock-timer { font-size: 40px; font-weight: 800; letter-spacing: 1px; margin: 10px 0 2px; font-variant-numeric: tabular-nums; color: var(--accent); }
+  .clock-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+  .clock-btn {
+    min-height: 52px; border-radius: 12px; border: 1px solid var(--border);
+    background: var(--bg-card); color: var(--text); font: inherit; font-size: 16px; font-weight: 700; cursor: pointer;
+  }
+  .clock-btn.primary { background: var(--accent); border-color: var(--accent); color: #1a3a2e; font-size: 18px; min-height: 60px; }
+  .clock-btn.danger { border-color: #c0605a; color: #e88a84; }
+  .clock-btn:disabled { opacity: .55; cursor: default; }
+  .tello-say {
+    margin-top: 14px; padding: 10px 12px; border-radius: 10px; text-align: left; font-size: 14px;
+    background: rgba(232, 193, 92, .12); border: 1px solid rgba(232, 193, 92, .45);
+  }
+  .tello-say b { color: var(--accent); }
+  .voice-btn { margin-top: 12px; background: none; border: 1px dashed var(--border); color: var(--text-muted); border-radius: 10px; padding: 8px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  .clock-err { color: #e88a84; font-size: 13px; margin-top: 10px; }
+  .hours-card { margin-top: 28px; text-align: left; }
+  .hours-card h2 { font-size: 16px; margin: 0 0 10px; }
+  .hours-week { display: flex; justify-content: space-between; font-weight: 700; font-size: 13px; margin: 14px 0 6px; color: var(--accent); }
+  .hours-row { display: flex; justify-content: space-between; gap: 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; font-size: 13px; margin-bottom: 6px; }
+  .hours-row .h-sub { color: var(--text-muted); font-size: 12px; }
+  .hours-row .h-flag { color: #e8c15c; font-size: 12px; }
+  .hours-note { font-size: 12px; color: var(--text-muted); margin-top: 10px; }
   .shift-note { font-size: 12px; color: var(--text-muted); margin-top: 24px; text-align: center; }
 </style>
 </head>
@@ -138,6 +174,8 @@ function renderSchedule(data, token) {
   document.getElementById('content').innerHTML = `
     <h1 class="shift-greeting">Hi ${esc(data.staffName)}</h1>
 
+    <div id="clockCard"></div>
+
     <div class="month-bar">
       <button type="button" class="month-nav" data-month="${esc(data.prevMonth)}" aria-label="Previous month">‹</button>
       <div class="month-label">${esc(data.monthLabel)}</div>
@@ -148,6 +186,8 @@ function renderSchedule(data, token) {
 
     <div class="day-list">${daysHtml}</div>
 
+    <div id="hoursCard"></div>
+
     <p class="shift-note">This is pulled from wherever your name shows up on the schedule — if
       something looks wrong, check with the admin.</p>
   `;
@@ -155,6 +195,7 @@ function renderSchedule(data, token) {
   document.querySelectorAll('.month-nav').forEach((btn) => {
     btn.addEventListener('click', () => loadAndRender(token, btn.dataset.month));
   });
+  renderClock();
 }
 
 async function loadAndRender(token, month) {
@@ -176,7 +217,331 @@ function init() {
     renderError('No link was provided. Ask the admin to resend your link.');
     return;
   }
+  TOKEN = token;
   loadAndRender(token, null);
+  loadClock();
+  setInterval(tick, 1000);
+  setInterval(loadClock, 60000); // pick up admin changes and schedule edits
+}
+
+// ---------------------------------------------------------------------------
+// Time clock + Tello voice
+// ---------------------------------------------------------------------------
+// Punches go to /api/staff-clock, which stamps them with the SERVER clock.
+// The phone's clock is only used to tick the on-screen timer and to time
+// Tello's reminders (shifted by the server offset so they match). Tello speaks
+// through the browser's built-in voice, which only works while this page is
+// open and after one tap — when the phone is asleep the reminder shows up
+// here as soon as the page is opened again.
+let TOKEN = null;
+const clock = { data: null, offset: 0, busy: false, err: '', say: '', voiceReady: false };
+const spoken = new Set();
+
+function nowMs() { return Date.now() + clock.offset; }
+
+function fmtTime(iso) {
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: clock.data ? clock.data.timezone : undefined });
+}
+function fmtDur(min) {
+  min = Math.max(0, Math.round(min));
+  const h = Math.floor(min / 60), m = min % 60;
+  const hp = h ? `${h} hour${h === 1 ? '' : 's'}` : '';
+  const mp = `${m} minute${m === 1 ? '' : 's'}`;
+  return h ? (m ? `${hp} ${mp}` : hp) : mp;
+}
+function fmtHM(min) {
+  min = Math.max(0, Math.round(min));
+  return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`;
+}
+function fmtClockSecs(ms) {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// Unpaid breaks come off at their ACTUAL length. Paid-break overage is only
+// flagged (paidOver) — whether to deduct it is the employer's call.
+function entryStats(e, atMs) {
+  const inAt = new Date(e.clock_in).getTime();
+  const outAt = e.clock_out ? new Date(e.clock_out).getTime() : atMs;
+  const span = Math.max(0, (outAt - inAt) / 60000);
+  let unpaid = 0, over = 0, paidOver = 0;
+  (e.breaks || []).forEach((b) => {
+    const s = new Date(b.start).getTime();
+    const en = b.end ? new Date(b.end).getTime() : atMs;
+    const actual = Math.max(0, (en - s) / 60000);
+    if (!b.paid) unpaid += actual;
+    const o = Math.round(actual - (b.allowed || 0));
+    if (o >= 1) { over += o; if (b.paid) paidOver += o; }
+  });
+  return { span, unpaid, over, paidOver, worked: Math.max(0, span - unpaid) };
+}
+function openBreakOf(e) {
+  const b = e && (e.breaks || [])[(e.breaks || []).length - 1];
+  return b && !b.end ? b : null;
+}
+
+function unlockVoice() {
+  if (clock.voiceReady) return;
+  clock.voiceReady = true;
+  try { if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch (e) { /* ignore */ }
+  renderClock();
+}
+function telloSay(text, speak = true) {
+  clock.say = text;
+  const el = document.getElementById('telloSay');
+  if (el) el.innerHTML = `<b>Tello:</b> ${esc(text)}`;
+  else renderClock();
+  if (!speak || !clock.voiceReady) return;
+  try {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-US';
+    u.rate = 0.95;
+    window.speechSynthesis.speak(u);
+  } catch (e) { /* ignore */ }
+}
+// Say each reminder once — also across page reloads on the same device.
+function sayOnce(key, text) {
+  if (spoken.has(key)) return;
+  try { if (localStorage.getItem('tello-said:' + key)) { spoken.add(key); return; } } catch (e) { /* ignore */ }
+  spoken.add(key);
+  try { localStorage.setItem('tello-said:' + key, '1'); } catch (e) { /* ignore */ }
+  telloSay(text);
+}
+
+function breaksSpoken() {
+  const b = (clock.data && clock.data.breaks) || [];
+  if (!b.length) return '';
+  const parts = b.map((x) => `a ${x.minutes} minute ${x.label.toLowerCase()}${x.paid ? '' : ' (unpaid)'}`);
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+  return `Remember your breaks today: ${list}.`;
+}
+function localHour() {
+  return Number(new Intl.DateTimeFormat('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: clock.data.timezone }).format(new Date(nowMs())));
+}
+
+function voiceCheck() {
+  const d = clock.data;
+  if (!d) return;
+  const now = nowMs();
+  const first = (d.staffName || '').split(' ')[0];
+  const e = d.open;
+  if (e) {
+    const ob = openBreakOf(e);
+    if (ob && ob.allowed > 0 && (now - new Date(ob.start).getTime()) / 60000 >= ob.allowed) {
+      sayOnce(`bu:${e.id}:${e.breaks.length}`, `Your ${ob.allowed} minute ${ob.label.toLowerCase()} is up. Please tap End break when you are back.`);
+    }
+    const endIso = e.sched_end;
+    if (endIso) {
+      const endAt = new Date(endIso).getTime();
+      if (now >= endAt - 5 * 60000 && now < endAt + 30 * 60000) {
+        const st = entryStats(e, now);
+        sayOnce(`out:${e.id}`, `${first ? first + ', your' : 'Your'} shift ends at ${fmtTime(endIso)}. So far you have worked ${fmtDur(st.worked)}. Thank you for today, take care, and please remember to clock out.`);
+      }
+    }
+  } else {
+    (d.shifts || []).forEach((s) => {
+      const startAt = new Date(s.start).getTime();
+      if (now >= startAt - 5 * 60000 && now < startAt + 15 * 60000) {
+        const h = localHour();
+        const g = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+        sayOnce(`in:${s.start}`, `${g}${first ? ', ' + first : ''}. Your shift at ${s.homeName} starts at ${fmtTime(s.start)}. ${breaksSpoken()} Please clock in when you arrive.`);
+      }
+    });
+  }
+}
+
+function tick() {
+  if (!clock.data) return;
+  const t = document.getElementById('clockTimer');
+  if (t && clock.data.open) t.textContent = fmtClockSecs(entryStats(clock.data.open, nowMs()).worked * 60000);
+  const b = document.getElementById('breakTimer');
+  const ob = openBreakOf(clock.data.open);
+  if (b && ob) b.textContent = fmtClockSecs(nowMs() - new Date(ob.start).getTime());
+  voiceCheck();
+}
+
+function applyClockData(data) {
+  clock.data = data;
+  clock.offset = new Date(data.serverNow).getTime() - Date.now();
+  clock.err = '';
+}
+
+async function loadClock() {
+  if (!TOKEN || clock.busy) return;
+  try {
+    const res = await fetch(`/api/staff-clock?token=${encodeURIComponent(TOKEN)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    applyClockData(data);
+  } catch (err) {
+    if (!clock.data) clock.err = err.message;
+  }
+  renderClock();
+}
+
+async function punch(action) {
+  if (clock.busy) return;
+  unlockVoice();
+  if (action === 'out' && !confirm('Clock out now?')) return;
+  clock.busy = true;
+  clock.err = '';
+  renderClock();
+  try {
+    const res = await fetch('/api/staff-clock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, action }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    const before = clock.data;
+    applyClockData(data);
+    clock.busy = false;
+    afterPunch(data, before);
+  } catch (err) {
+    clock.err = err.message;
+    clock.busy = false;
+  }
+  renderClock();
+}
+
+function afterPunch(data, before) {
+  const now = nowMs();
+  if (data.notice === 'clocked_in' && data.open) {
+    telloSay(`Clocked in at ${fmtTime(data.open.clock_in)}. Have a great shift.`);
+  } else if (data.notice === 'break_started' && data.open) {
+    const b = data.open.breaks[data.open.breaks.length - 1];
+    telloSay(`${b.label} started. You have ${b.allowed} minutes.`);
+  } else if (data.notice === 'break_ended' && data.open) {
+    const b = data.open.breaks[data.open.breaks.length - 1];
+    const actual = (new Date(b.end) - new Date(b.start)) / 60000;
+    const over = Math.round(actual - b.allowed);
+    telloSay(over >= 1
+      ? `Welcome back. Your ${b.label.toLowerCase()} was ${Math.round(actual)} minutes, ${over} over the ${b.allowed} allowed. That is recorded on your timesheet.`
+      : 'Welcome back.');
+  } else if (data.notice === 'clocked_out') {
+    const prev = before && before.open;
+    const done = prev && (data.entries || []).find((x) => x.id === prev.id);
+    const st = done ? entryStats(done, now) : null;
+    telloSay(`Clocked out at ${done ? fmtTime(done.clock_out) : 'now'}.${st ? ` Total recorded: ${fmtDur(st.worked)}.` : ''} Thank you, goodbye and take care.`, false);
+    if (clock.voiceReady) {
+      try {
+        const u = new SpeechSynthesisUtterance(clock.say);
+        u.lang = 'en-US'; u.rate = 0.95;
+        window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
+      } catch (e) { /* ignore */ }
+    }
+  }
+}
+
+function renderClock() {
+  const card = document.getElementById('clockCard');
+  if (!card) return;
+  const d = clock.data;
+  if (!d) {
+    card.innerHTML = `<div class="clock-card"><div class="clock-label">Time clock</div>
+      <div class="clock-sub">${clock.err ? '' : 'Loading…'}</div>${clock.err ? `<div class="clock-err">${esc(clock.err)}</div>` : ''}</div>`;
+    return;
+  }
+  const now = nowMs();
+  const e = d.open;
+  const ob = openBreakOf(e);
+  let status, sub = '', body = '', actions = '';
+  const nextShift = (d.shifts || []).find((s) => new Date(s.end).getTime() > now);
+  const shiftLine = nextShift
+    ? `Your shift: ${esc(nextShift.homeName)} · ${esc(nextShift.startLabel)}–${esc(nextShift.endLabel)}`
+    : 'No shift with a start and end time on your schedule right now.';
+  if (!e) {
+    status = 'Not clocked in';
+    sub = shiftLine;
+    actions = `<button type="button" class="clock-btn primary" data-punch="in" ${clock.busy ? 'disabled' : ''}>Clock In</button>`;
+  } else if (ob) {
+    status = `On ${esc(ob.label.toLowerCase())}`;
+    sub = `${ob.allowed} minutes allowed · ${ob.paid ? 'paid' : 'unpaid'}`;
+    body = `<div class="clock-timer" id="breakTimer">0:00:00</div><div class="clock-sub">break time so far</div>`;
+    actions = `<button type="button" class="clock-btn primary" data-punch="break_end" ${clock.busy ? 'disabled' : ''}>End break</button>`;
+  } else {
+    status = `Clocked in since ${esc(fmtTime(e.clock_in))}`;
+    sub = e.sched_end ? `Shift ends ${esc(fmtTime(e.sched_end))}` : 'No scheduled end time';
+    body = `<div class="clock-timer" id="clockTimer">0:00:00</div><div class="clock-sub">worked so far (unpaid breaks taken out)</div>`;
+    const def = d.breaks[(e.breaks || []).length];
+    if (def) actions += `<button type="button" class="clock-btn" data-punch="break_start" ${clock.busy ? 'disabled' : ''}>Start ${esc(def.label.toLowerCase())} (${def.minutes} min${def.paid ? '' : ', unpaid'})</button>`;
+    actions += `<button type="button" class="clock-btn danger" data-punch="out" ${clock.busy ? 'disabled' : ''}>Clock Out</button>`;
+  }
+  card.innerHTML = `
+    <div class="clock-card">
+      <div class="clock-label">Time clock</div>
+      <div class="clock-status">${status}</div>
+      <div class="clock-sub">${sub}</div>
+      ${body}
+      <div class="clock-actions">${actions}</div>
+      ${clock.err ? `<div class="clock-err">${esc(clock.err)}</div>` : ''}
+      ${clock.say ? `<div class="tello-say" id="telloSay"><b>Tello:</b> ${esc(clock.say)}</div>` : ''}
+      ${clock.voiceReady ? '' : '<button type="button" class="voice-btn" data-voice="1">🔊 Tap to let Tello speak</button>'}
+      <div class="clock-sub" style="margin-top:12px">Times are recorded by the server. Tello speaks while this page is open.</div>
+    </div>`;
+  card.querySelectorAll('[data-punch]').forEach((b) => b.addEventListener('click', () => punch(b.dataset.punch)));
+  const vb = card.querySelector('[data-voice]');
+  if (vb) vb.addEventListener('click', () => { unlockVoice(); telloSay('Hi, I am Tello. I will remind you before your shift starts and ends.'); });
+  renderHours();
+  tick();
+}
+
+// ---- My hours: last 14 days, with weekly totals ----
+function localDay(iso, tz) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+}
+function weekStartOf(dayStr) {
+  const [y, m, d] = dayStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7)); // Monday
+  return dt.toISOString().slice(0, 10);
+}
+function fmtDayLabel(dayStr) {
+  const [y, m, d] = dayStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function renderHours() {
+  const host = document.getElementById('hoursCard');
+  const d = clock.data;
+  if (!host || !d) return;
+  const tz = d.timezone;
+  const now = nowMs();
+  const cutoff = now - 14 * 86400000;
+  const rows = (d.entries || []).filter((e) => new Date(e.clock_in).getTime() >= cutoff || !e.clock_out);
+  if (!rows.length) {
+    host.innerHTML = `<div class="hours-card"><h2>My hours</h2><div class="clock-sub">Nothing recorded in the last 14 days.</div></div>`;
+    return;
+  }
+  const weeks = {};
+  rows.forEach((e) => {
+    const day = localDay(e.clock_in, tz);
+    const wk = weekStartOf(day);
+    (weeks[wk] = weeks[wk] || []).push({ e, day, st: entryStats(e, now) });
+  });
+  const html = Object.keys(weeks).sort().reverse().map((wk) => {
+    const list = weeks[wk];
+    const total = list.reduce((a, x) => a + x.st.worked, 0);
+    const items = list.map(({ e, day, st }) => {
+      const flags = [];
+      if (!e.clock_out && now - new Date(e.clock_in).getTime() > 16 * 3600000) flags.push('Still clocked in — please clock out');
+      if (st.over >= 1) flags.push(`Break over by ${Math.round(st.over)} min`);
+      if (e.adjusted_at) flags.push('Adjusted by admin');
+      return `<div class="hours-row">
+        <div><div>${esc(fmtDayLabel(day))}</div>
+          <div class="h-sub">${esc(fmtTime(e.clock_in))} – ${e.clock_out ? esc(fmtTime(e.clock_out)) : '…'}${st.unpaid ? ` · breaks −${Math.round(st.unpaid)}m` : ''}</div>
+          ${flags.map((f) => `<div class="h-flag">${esc(f)}</div>`).join('')}</div>
+        <div style="font-weight:700">${fmtHM(st.worked)}</div>
+      </div>`;
+    }).join('');
+    return `<div class="hours-week"><span>Week of ${esc(fmtDayLabel(wk))}</span><span>${fmtHM(total)}</span></div>${items}`;
+  }).join('');
+  host.innerHTML = `<div class="hours-card"><h2>My hours</h2>${html}
+    <p class="hours-note">Hours are what the clock recorded. Your employer's payroll record is the official one — tell the admin if anything looks wrong.</p></div>`;
 }
 
 init();
