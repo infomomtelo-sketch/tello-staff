@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
 <meta name="theme-color" content="#1a3a2e" />
 <meta name="color-scheme" content="dark" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -224,7 +224,11 @@
   .btn-remove:hover { color: var(--danger); }
 
   /* ---------- App shell ---------- */
-  .app { min-height: 100vh; display: flex; flex-direction: column; }
+  /* The app fills the visible screen and only .app-scroll scrolls, so the browser's
+     address bar never covers or toggles the bottom nav. */
+  html, body { height: 100%; }
+  .app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  .app-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
   .error-banner {
     position: sticky;
     top: 0;
@@ -265,9 +269,8 @@
   .app-title { font-size: 18px; font-weight: 800; }
   .app-title span { color: var(--accent); }
   .app-main {
-    flex: 1;
     padding: 16px;
-    padding-bottom: 90px;
+    padding-bottom: 24px;
     max-width: 1100px;
     width: 100%;
     margin: 0 auto;
@@ -277,8 +280,7 @@
   .view.placeholder-view.active { display: flex; }
 
   .bottom-nav {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
+    flex: 0 0 auto;
     background: var(--bg-app);
     border-top: 1px solid var(--border);
     display: flex;
@@ -725,7 +727,7 @@
   .chat-input-bar input { flex: 1; }
 
   @media (max-width: 600px) {
-    .app-main { padding: 12px; padding-bottom: 90px; }
+    .app-main { padding: 12px; padding-bottom: 24px; }
     .week-label { order: -1; width: 100%; }
   }
 
@@ -745,6 +747,7 @@
     .day-input { border: none !important; background: transparent !important; }
     .section-title, .week-label, .print-title { color: #000 !important; }
     .app-main { padding-bottom: 0; }
+    html, body, .app, .app-scroll { height: auto !important; overflow: visible !important; }
   }
 </style>
 </head>
@@ -789,6 +792,7 @@
     </div>
   </header>
 
+  <div class="app-scroll" id="appScroll">
   <main class="app-main">
     <div id="view-schedule" class="view"></div>
 
@@ -798,6 +802,7 @@
 
     <div id="view-chat" class="view"></div>
   </main>
+  </div>
 
   <nav class="bottom-nav no-print">
     <button class="nav-btn" data-action="nav-tab" data-tab="schedule">
@@ -2478,6 +2483,7 @@ function onGlobalClick(e) {
     case 'nav-tab':
       state.tab = btn.dataset.tab;
       renderApp();
+      { const sc = document.getElementById('appScroll'); if (sc) sc.scrollTop = 0; }
       break;
     case 'sign-out':
       handleSignOut();
