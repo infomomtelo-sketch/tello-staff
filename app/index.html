@@ -154,7 +154,7 @@
   .auth-footer-links a:hover { color: var(--accent); }
 
   /* ---------- Inputs / buttons ---------- */
-  input[type="text"], input[type="email"], input[type="password"], input[type="time"], input[type="date"] {
+  input[type="text"], input[type="email"], input[type="password"], input[type="time"], input[type="date"], input[type="number"], input[type="datetime-local"] {
     background: var(--bg-input);
     border: 1px solid var(--border);
     color: var(--text);
@@ -731,6 +731,30 @@
     .week-label { order: -1; width: 100%; }
   }
 
+
+  /* ---------- Time clock (admin) ---------- */
+  .nav-btn { position: relative; }
+  .nav-badge { position: absolute; top: 2px; right: calc(50% - 22px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--danger, #d9534f); color: #fff; font-size: 11px; font-weight: 800; line-height: 18px; text-align: center; }
+  .time-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .time-row:last-child { border-bottom: none; }
+  .time-name { font-weight: 700; }
+  .time-sub { font-size: 12px; color: var(--text-muted); }
+  .time-flag { font-size: 12px; color: var(--accent); }
+  .time-flag.bad { color: var(--danger, #d9534f); font-weight: 700; }
+  .time-total { font-weight: 800; white-space: nowrap; }
+  .time-staff-head { display: flex; justify-content: space-between; font-weight: 800; margin: 16px 0 4px; color: var(--accent); }
+  .time-range { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .time-range input[type="date"] { flex: 1; min-width: 130px; width: auto; }
+  .time-edit { background: var(--bg-input); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin: 6px 0 10px; width: 100%; display: flex; flex-direction: column; gap: 8px; }
+  .time-edit label { font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px; }
+  .time-edit-actions { display: flex; gap: 8px; }
+  .break-rule { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .break-rule input[type="text"] { flex: 2; min-width: 110px; }
+  .break-rule input[type="number"] { flex: 1; min-width: 70px; max-width: 90px; }
+  .break-rule label.paid { display: flex; align-items: center; gap: 4px; font-size: 13px; }
+  .time-print-title { display: none; }
+  .time-select { background: var(--bg-input); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 14px; width: 100%; }
+
   @media print {
     body { background: #fff; }
     .no-print { display: none !important; }
@@ -746,6 +770,8 @@
     .schedule-grid td.month-pad, .month-grid td.month-pad { background: #f2f2f2 !important; }
     .day-input { border: none !important; background: transparent !important; }
     .section-title, .week-label, .print-title { color: #000 !important; }
+    .time-print-title { display: block; color: #000; margin-bottom: 10px; }
+    #view-time .card, #view-time .card * { color: #000 !important; background: #fff !important; border-color: #999 !important; }
     .app-main { padding-bottom: 0; }
     html, body, .app, .app-scroll { height: auto !important; overflow: visible !important; }
   }
@@ -798,6 +824,8 @@
 
     <div id="view-today" class="view"></div>
 
+    <div id="view-time" class="view"></div>
+
     <div id="view-staff" class="view"></div>
 
     <div id="view-chat" class="view"></div>
@@ -810,6 +838,9 @@
     </button>
     <button class="nav-btn" data-action="nav-tab" data-tab="today">
       <span class="nav-icon">☀️</span><span>Today</span>
+    </button>
+    <button class="nav-btn" data-action="nav-tab" data-tab="time">
+      <span class="nav-icon">⏱️</span><span>Time</span><span class="nav-badge" id="timeBadge" hidden></span>
     </button>
     <button class="nav-btn" data-action="nav-tab" data-tab="staff">
       <span class="nav-icon">👥</span><span>Staff</span>
@@ -863,6 +894,13 @@ const state = {
   chatMessages: [],
   chatSending: false,
   staff: [],
+  clockSettings: null,
+  timeFrom: null,
+  timeTo: null,
+  timeEntries: [],
+  openAll: [],
+  editEntryId: null,
+  timeError: '',
   shareLinks: [],
   requests: [],
 };
@@ -1067,6 +1105,8 @@ async function enterApp(user) {
     await loadChatMessages();
     await loadStaff();
     await loadShareLinks();
+    refreshOpenEntries();
+    setInterval(refreshOpenEntries, 60000);
     // Requests are re-fetched fresh every time Today's Board renders (see
     // renderToday), so no need to load them here too.
   }
@@ -1080,6 +1120,7 @@ async function enterApp(user) {
 async function loadConfig(userId) {
   const { data, error } = await sb.from('tello_staff_config').select('*').eq('user_id', userId).maybeSingle();
   if (error) { console.error(error); showErrorBanner(`Couldn't load your homes and reliever setup — ${error.message}`); }
+  state.clockSettings = mergeClockSettings(data && data.clock_settings);
   if (data) {
     state.config = {
       homes: (data.homes && data.homes.length) ? data.homes : defaultConfig().homes,
@@ -1786,6 +1827,7 @@ function renderApp() {
   if (state.tab === 'today') renderToday();
   if (state.tab === 'chat') renderChat();
   if (state.tab === 'staff') renderStaff();
+  if (state.tab === 'time') renderTime();
 }
 
 // ---------------------------------------------------------------------------
@@ -2452,6 +2494,342 @@ function renderStaff() {
   `;
 }
 
+
+// ---------------------------------------------------------------------------
+// Time clock — admin side
+// ---------------------------------------------------------------------------
+// Staff punch in/out from their My-Shift link (functions/api/staff-clock.js,
+// server-stamped times). Rows live in tello_staff_clock_entries under this
+// admin's user_id, so everything here reads through normal RLS. Unpaid breaks
+// are deducted at their ACTUAL length; paid-break overage is only flagged for
+// the admin to review. An adjustment never erases the original punches
+// (orig_clock_in / orig_clock_out are kept) and entries are never deleted —
+// payroll records should be corrected, not removed. The employer's own payroll
+// record is the official one; have a payroll/labor advisor confirm the rules.
+const TZ_OPTIONS = [
+  ['America/Los_Angeles', 'Pacific'], ['America/Denver', 'Mountain'], ['America/Phoenix', 'Arizona (no daylight time)'],
+  ['America/Chicago', 'Central'], ['America/New_York', 'Eastern'], ['America/Anchorage', 'Alaska'], ['Pacific/Honolulu', 'Hawaii'],
+];
+function defaultClockSettings() {
+  return {
+    timezone: 'America/Los_Angeles',
+    breaks: [
+      { label: 'Rest break', minutes: 10, paid: true },
+      { label: 'Rest break', minutes: 10, paid: true },
+      { label: 'Meal break', minutes: 30, paid: false },
+    ],
+  };
+}
+function mergeClockSettings(raw) {
+  const d = defaultClockSettings();
+  if (raw && typeof raw.timezone === 'string') d.timezone = raw.timezone;
+  if (raw && Array.isArray(raw.breaks)) {
+    d.breaks = raw.breaks.filter((b) => b && Number(b.minutes) > 0)
+      .map((b) => ({ label: String(b.label || 'Break').slice(0, 40), minutes: Math.round(Number(b.minutes)), paid: !!b.paid }));
+  }
+  return d;
+}
+function clockTz() { return (state.clockSettings || defaultClockSettings()).timezone; }
+
+function tzParts(date, tz) {
+  const o = {};
+  new Intl.DateTimeFormat('en-CA', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    .formatToParts(date).forEach((p) => { o[p.type] = p.value; });
+  return { y: +o.year, mo: +o.month, d: +o.day, h: +o.hour, mi: +o.minute, s: +o.second };
+}
+function zonedToUtc(dateStr, h, m, tz) {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const target = Date.UTC(y, mo - 1, d, h, m, 0);
+  let guess = target;
+  for (let i = 0; i < 2; i += 1) {
+    const p = tzParts(new Date(guess), tz);
+    guess -= Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi, p.s) - target;
+  }
+  return new Date(guess);
+}
+function dayStrIn(dateLike) {
+  const p = tzParts(new Date(dateLike), clockTz());
+  return `${p.y}-${String(p.mo).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`;
+}
+function shiftDayStr(dayStr, n) {
+  const [y, m, d] = dayStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+function mondayOf(dayStr) {
+  const [y, m, d] = dayStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return shiftDayStr(dayStr, -((dt.getUTCDay() + 6) % 7));
+}
+function fmtT(iso) { return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: clockTz() }); }
+function fmtDayLabel(dayStr) {
+  const [y, m, d] = dayStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+function fmtHM(min) { min = Math.max(0, Math.round(min)); return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`; }
+function toLocalInput(iso) {
+  const p = tzParts(new Date(iso), clockTz());
+  return `${p.y}-${String(p.mo).padStart(2, '0')}-${String(p.d).padStart(2, '0')}T${String(p.h).padStart(2, '0')}:${String(p.mi).padStart(2, '0')}`;
+}
+function fromLocalInput(val) {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/.exec(val || '');
+  return m ? zonedToUtc(m[1], Number(m[2]), Number(m[3]), clockTz()) : null;
+}
+
+function entryStats(e, atMs) {
+  const inAt = new Date(e.clock_in).getTime();
+  const outAt = e.clock_out ? new Date(e.clock_out).getTime() : atMs;
+  const span = Math.max(0, (outAt - inAt) / 60000);
+  let unpaid = 0, over = 0, paidOver = 0;
+  (e.breaks || []).forEach((b) => {
+    const st = new Date(b.start).getTime();
+    const en = b.end ? new Date(b.end).getTime() : atMs;
+    const actual = Math.max(0, (en - st) / 60000);
+    if (!b.paid) unpaid += actual;
+    const o = Math.round(actual - (b.allowed || 0));
+    if (o >= 1) { over += o; if (b.paid) paidOver += o; }
+  });
+  return { span, unpaid, over, paidOver, worked: Math.max(0, span - unpaid) };
+}
+function openBreakOf(e) {
+  const b = e && (e.breaks || [])[(e.breaks || []).length - 1];
+  return b && !b.end ? b : null;
+}
+// Minutes past when a still-open entry should have ended (0 = not overdue):
+// 30 min after the scheduled end, or — with no schedule — after 14 hours.
+function overdueMinutes(e, atMs) {
+  if (e.clock_out) return 0;
+  const limit = e.sched_end ? new Date(e.sched_end).getTime() + 30 * 60000 : new Date(e.clock_in).getTime() + 14 * 3600000;
+  return atMs > limit ? Math.round((atMs - limit) / 60000) + (e.sched_end ? 30 : 0) : 0;
+}
+
+function setDefaultTimeRange() {
+  const today = dayStrIn(Date.now());
+  state.timeFrom = mondayOf(today);
+  state.timeTo = shiftDayStr(state.timeFrom, 6);
+}
+
+let clockTableMissing = false;
+async function refreshOpenEntries() {
+  if (clockTableMissing || !state.user) return;
+  const { data, error } = await sb.from('tello_staff_clock_entries').select('*')
+    .eq('user_id', state.user.id).is('clock_out', null).order('clock_in', { ascending: true });
+  if (error) {
+    if (/does not exist|schema cache|relation/i.test(error.message || '')) clockTableMissing = true;
+    state.timeError = clockTableMissing
+      ? 'The time clock table is not set up yet — run schema_clock.sql in Supabase, then reload.'
+      : `Couldn't load time clock data — ${error.message}`;
+  } else {
+    state.openAll = data || [];
+    state.timeError = '';
+  }
+  const n = state.openAll.filter((e) => overdueMinutes(e, Date.now()) > 0).length;
+  const badge = document.getElementById('timeBadge');
+  if (badge) { badge.hidden = !n; badge.textContent = n; }
+  if (state.tab === 'time' && !state.editEntryId && !(document.activeElement && document.getElementById('view-time').contains(document.activeElement))) renderTime();
+}
+
+async function loadTimeRange() {
+  if (clockTableMissing) return;
+  const tz = clockTz();
+  const from = zonedToUtc(state.timeFrom, 0, 0, tz).toISOString();
+  const to = zonedToUtc(shiftDayStr(state.timeTo, 1), 0, 0, tz).toISOString();
+  const { data, error } = await sb.from('tello_staff_clock_entries').select('*')
+    .eq('user_id', state.user.id).gte('clock_in', from).lt('clock_in', to).order('clock_in', { ascending: false });
+  if (error) { console.error(error); state.timeError = `Couldn't load timesheets — ${error.message}`; state.timeEntries = []; }
+  else { state.timeEntries = data || []; }
+}
+
+async function saveClockSettings() {
+  const { error } = await sb.from('tello_staff_config').update({ clock_settings: state.clockSettings }).eq('user_id', state.user.id);
+  if (error) { console.error(error); showErrorBanner(`Couldn't save time clock settings — ${error.message}`); }
+}
+
+async function saveEntryAdjustment(id, inVal, outVal, note) {
+  const e = [...state.timeEntries, ...state.openAll].find((x) => x.id === id);
+  if (!e) return;
+  const inAt = fromLocalInput(inVal);
+  const outAt = outVal ? fromLocalInput(outVal) : null;
+  if (!inAt) { alert('Enter a valid clock-in time.'); return; }
+  if (outVal && !outAt) { alert('Enter a valid clock-out time.'); return; }
+  if (outAt && outAt <= inAt) { alert('Clock-out must be after clock-in.'); return; }
+  if (outAt && outAt.getTime() > Date.now() + 5 * 60000) { alert('Clock-out cannot be in the future.'); return; }
+  if (!note.trim()) { alert('Add a short reason so the change is on record.'); return; }
+  const patch = {
+    clock_in: inAt.toISOString(),
+    clock_out: outAt ? outAt.toISOString() : null,
+    orig_clock_in: e.orig_clock_in || e.clock_in,
+    orig_clock_out: e.orig_clock_out || e.clock_out || null,
+    adjusted_at: new Date().toISOString(),
+    adjusted_note: note.trim().slice(0, 300),
+  };
+  // Closing an entry that was mid-break ends that break at the clock-out.
+  if (outAt && openBreakOf(e)) {
+    patch.breaks = e.breaks.map((b, i) => (i === e.breaks.length - 1 ? { ...b, end: outAt.toISOString() } : b));
+  }
+  const { error } = await sb.from('tello_staff_clock_entries').update(patch).eq('id', id).eq('user_id', state.user.id);
+  if (error) { console.error(error); alert('Could not save: ' + error.message); return; }
+  state.editEntryId = null;
+  await refreshOpenEntries();
+  await loadTimeRange();
+  renderTime();
+}
+
+function csvCell(v) {
+  let t = String(v ?? '');
+  if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; // stop spreadsheet formula injection
+  return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+}
+function exportTimesheetCsv() {
+  const now = Date.now();
+  const rows = [['Staff', 'Home', 'Date', 'Clock in', 'Clock out', 'Unpaid break (min)', 'Break over allowed (min)', 'Paid-break overage to review (min)', 'Hours worked', 'Adjusted', 'Adjustment reason', 'Original clock in', 'Original clock out']];
+  [...state.timeEntries].sort((a, b) => a.staff_name.localeCompare(b.staff_name) || a.clock_in.localeCompare(b.clock_in)).forEach((e) => {
+    const st = entryStats(e, now);
+    rows.push([e.staff_name, e.home_name || '', dayStrIn(e.clock_in), fmtT(e.clock_in), e.clock_out ? fmtT(e.clock_out) : 'STILL OPEN',
+      Math.round(st.unpaid), Math.round(st.over), Math.round(st.paidOver), (st.worked / 60).toFixed(2),
+      e.adjusted_at ? 'Yes' : 'No', e.adjusted_note || '',
+      e.orig_clock_in ? fmtT(e.orig_clock_in) : '', e.orig_clock_out ? fmtT(e.orig_clock_out) : '']);
+  });
+  const csv = '﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `tello-timesheets-${state.timeFrom}-to-${state.timeTo}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+function editPanelHtml(e) {
+  const defOut = e.clock_out || (e.sched_end && new Date(e.sched_end).getTime() < Date.now() ? e.sched_end : '');
+  return `
+    <div class="time-edit" data-edit-id="${e.id}">
+      <label>Clock in <input type="datetime-local" data-f="in" value="${esc(toLocalInput(e.clock_in))}" /></label>
+      <label>Clock out ${e.clock_out ? '' : '(leave empty to keep them clocked in)'} <input type="datetime-local" data-f="out" value="${defOut ? esc(toLocalInput(defOut)) : ''}" /></label>
+      <label>Reason (kept on the record) <input type="text" data-f="note" maxlength="300" placeholder="e.g. forgot to clock out; confirmed with ${esc(e.staff_name.split(' ')[0])}" value="${esc(e.adjusted_note || '')}" /></label>
+      <div class="time-edit-actions">
+        <button class="btn-primary" data-action="time-edit-save" data-id="${e.id}">Save</button>
+        <button class="btn-outline" data-action="time-edit-cancel">Cancel</button>
+      </div>
+      <div class="time-sub">Times are in ${esc(clockTz().replace('_', ' '))} time. The original punches stay on the record.</div>
+    </div>`;
+}
+
+function renderTime() {
+  const view = document.getElementById('view-time');
+  if (!view) return;
+  if (!state.timeFrom) setDefaultTimeRange();
+  const now = Date.now();
+  const cs = state.clockSettings || defaultClockSettings();
+
+  const alerts = state.openAll.filter((e) => overdueMinutes(e, now) > 0);
+  const alertIds = new Set(alerts.map((e) => e.id));
+
+  const onClock = state.openAll.length
+    ? state.openAll.map((e) => {
+        const st = entryStats(e, now);
+        const ob = openBreakOf(e);
+        const od = overdueMinutes(e, now);
+        return `<div class="time-row">
+          <div><div class="time-name">${esc(e.staff_name)}</div>
+            <div class="time-sub">${esc(e.home_name || 'Home not matched')} · in at ${esc(fmtT(e.clock_in))}${e.sched_end ? ` · shift ends ${esc(fmtT(e.sched_end))}` : ''}</div>
+            <div class="time-flag ${od ? 'bad' : ''}">${od ? 'Possibly forgot to clock out' : (ob ? `On ${esc(ob.label.toLowerCase())}` : 'Working')}</div></div>
+          <div class="time-total">${fmtHM(st.worked)}</div>
+        </div>`;
+      }).join('')
+    : `<div class="muted">Nobody is clocked in right now.</div>`;
+
+  const alertHtml = alerts.length
+    ? `<section class="card no-print"><h3>⚠️ Forgot to clock out (${alerts.length})</h3>
+        ${alerts.map((e) => {
+          const od = overdueMinutes(e, now);
+          return `<div class="time-row">
+            <div><div class="time-name">${esc(e.staff_name)}</div>
+              <div class="time-sub">${e.sched_end ? `Shift ended ${esc(fmtT(e.sched_end))}` : `Clocked in ${esc(fmtT(e.clock_in))}`} · still clocked in</div>
+              <div class="time-flag bad">${fmtHM(od)} past due</div></div>
+            <button class="btn-outline small" data-action="time-edit" data-id="${e.id}">Fix clock-out</button>
+          </div>${state.editEntryId === e.id ? editPanelHtml(e) : ''}`;
+        }).join('')}
+      </section>`
+    : '';
+
+  // Timesheets grouped by person.
+  const byStaff = {};
+  state.timeEntries.forEach((e) => { (byStaff[e.staff_id] = byStaff[e.staff_id] || { name: e.staff_name, list: [] }).list.push(e); });
+  const staffBlocks = Object.values(byStaff).sort((a, b) => a.name.localeCompare(b.name)).map((g) => {
+    const stats = g.list.map((e) => entryStats(e, now));
+    const total = stats.reduce((a, x) => a + x.worked, 0);
+    const over = stats.reduce((a, x) => a + x.over, 0);
+    const rows = g.list.map((e, i) => {
+      const st = stats[i];
+      const flags = [];
+      if (!e.clock_out) flags.push(['Still clocked in', overdueMinutes(e, now) > 0]);
+      if (st.over >= 1) flags.push([`Break over allowed by ${Math.round(st.over)} min${st.paidOver >= 1 ? ` (${Math.round(st.paidOver)} min of it in paid breaks — review)` : ''}`, false]);
+      if (e.adjusted_at) flags.push([`Adjusted${e.adjusted_note ? ': ' + e.adjusted_note : ''}${e.orig_clock_in ? ` (was ${fmtT(e.orig_clock_in)}–${e.orig_clock_out ? fmtT(e.orig_clock_out) : 'open'})` : ''}`, false]);
+      return `<div class="time-row">
+        <div><div class="time-name">${esc(fmtDayLabel(dayStrIn(e.clock_in)))}</div>
+          <div class="time-sub">${esc(fmtT(e.clock_in))} – ${e.clock_out ? esc(fmtT(e.clock_out)) : '…'}${st.unpaid ? ` · unpaid breaks −${Math.round(st.unpaid)}m` : ''}${e.home_name ? ` · ${esc(e.home_name)}` : ''}</div>
+          ${flags.map(([t, bad]) => `<div class="time-flag ${bad ? 'bad' : ''}">${esc(t)}</div>`).join('')}</div>
+        <div style="display:flex;gap:8px;align-items:center"><span class="time-total">${fmtHM(st.worked)}</span>
+          <button class="btn-outline small no-print" data-action="time-edit" data-id="${e.id}">Edit</button></div>
+      </div>${state.editEntryId === e.id && !alertIds.has(e.id) ? editPanelHtml(e) : ''}`;
+    }).join('');
+    return `<div class="time-staff-head"><span>${esc(g.name)}</span><span>${fmtHM(total)}${over >= 1 ? ` · breaks over ${Math.round(over)}m` : ''}</span></div>${rows}`;
+  }).join('');
+  const grand = state.timeEntries.reduce((a, e) => a + entryStats(e, now).worked, 0);
+
+  const breakRules = cs.breaks.map((b, i) => `
+    <div class="break-rule">
+      <input type="text" data-kind="break-field" data-i="${i}" data-field="label" value="${esc(b.label)}" placeholder="Name" />
+      <input type="number" min="1" max="240" data-kind="break-field" data-i="${i}" data-field="minutes" value="${b.minutes}" /> <span class="time-sub">min</span>
+      <label class="paid"><input type="checkbox" data-kind="break-field" data-i="${i}" data-field="paid" ${b.paid ? 'checked' : ''} /> Paid</label>
+      <button class="btn-remove" data-action="break-remove" data-i="${i}">✕</button>
+    </div>`).join('');
+
+  view.innerHTML = `
+    ${state.timeError ? `<section class="card"><div class="time-flag bad">${esc(state.timeError)}</div></section>` : ''}
+    ${alertHtml}
+    <section class="card no-print">
+      <h3>On the clock now</h3>
+      ${onClock}
+      <div class="time-sub" style="margin-top:8px">Refreshes every minute. Staff clock in from their My-Shift link.</div>
+    </section>
+
+    <section class="card">
+      <h3 class="no-print">Timesheets</h3>
+      <div class="time-print-title"><h2 style="margin:0">Timesheets — ${esc(fmtDayLabel(state.timeFrom))} to ${esc(fmtDayLabel(state.timeTo))}</h2>
+        <div>Hours are what the time clock recorded; unpaid breaks are deducted at actual length. The employer's payroll record is the official one.</div></div>
+      <div class="time-range no-print">
+        <input type="date" data-kind="time-from" value="${esc(state.timeFrom)}" />
+        <input type="date" data-kind="time-to" value="${esc(state.timeTo)}" />
+        <button class="btn-outline small" data-action="time-range" data-range="this-week">This week</button>
+        <button class="btn-outline small" data-action="time-range" data-range="last-week">Last week</button>
+        <button class="btn-outline small" data-action="time-range" data-range="this-month">This month</button>
+      </div>
+      ${staffBlocks || '<div class="muted">No time entries in this range.</div>'}
+      ${staffBlocks ? `<div class="time-staff-head" style="color:inherit;border-top:1px solid var(--border);padding-top:8px"><span>All staff</span><span>${fmtHM(grand)}</span></div>` : ''}
+      <div class="no-print" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn-primary" data-action="time-csv" ${state.timeEntries.length ? '' : 'disabled'}>⬇ Export CSV</button>
+        <button class="btn-outline" data-action="print">🖨️ Print</button>
+      </div>
+    </section>
+
+    <section class="card no-print" id="timeSettings">
+      <h3>Clock settings</h3>
+      <p class="time-sub" style="margin-bottom:10px">Break rules below are placeholders — set them to what your payroll or labor advisor confirms for your homes. Tello reads these breaks out to staff and records any overage; changes apply to new punches only. Shift start/end times come from the Schedule (a Working line like "Peter, 7am-3pm").</p>
+      ${breakRules}
+      <button class="btn-outline small" data-action="break-add">+ Add a break</button>
+      <h4 class="sub">Time zone</h4>
+      <select class="time-select" data-kind="clock-tz">${TZ_OPTIONS.map(([v, l]) => `<option value="${v}" ${cs.timezone === v ? 'selected' : ''}>${esc(l)}</option>`).concat(TZ_OPTIONS.some(([v]) => v === cs.timezone) ? [] : [`<option value="${esc(cs.timezone)}" selected>${esc(cs.timezone)}</option>`]).join('')}</select>
+    </section>
+  `;
+}
+
+async function openTimeTab() {
+  if (!state.timeFrom) setDefaultTimeRange();
+  renderTime();
+  await refreshOpenEntries();
+  await loadTimeRange();
+  renderTime();
+}
+
 // ---------------------------------------------------------------------------
 // Event delegation
 // ---------------------------------------------------------------------------
@@ -2483,7 +2861,43 @@ function onGlobalClick(e) {
     case 'nav-tab':
       state.tab = btn.dataset.tab;
       renderApp();
+      if (state.tab === 'time') openTimeTab();
       { const sc = document.getElementById('appScroll'); if (sc) sc.scrollTop = 0; }
+      break;
+    case 'time-range': {
+      const today = dayStrIn(Date.now());
+      const r = btn.dataset.range;
+      if (r === 'this-week') { state.timeFrom = mondayOf(today); state.timeTo = shiftDayStr(state.timeFrom, 6); }
+      else if (r === 'last-week') { state.timeFrom = shiftDayStr(mondayOf(today), -7); state.timeTo = shiftDayStr(state.timeFrom, 6); }
+      else { state.timeFrom = today.slice(0, 8) + '01'; const [y, m] = today.split('-').map(Number); state.timeTo = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); }
+      loadTimeRange().then(renderTime);
+      break;
+    }
+    case 'time-edit':
+      state.editEntryId = btn.dataset.id;
+      renderTime();
+      break;
+    case 'time-edit-cancel':
+      state.editEntryId = null;
+      renderTime();
+      break;
+    case 'time-edit-save': {
+      const panel = btn.closest('.time-edit');
+      saveEntryAdjustment(btn.dataset.id, panel.querySelector('[data-f=in]').value, panel.querySelector('[data-f=out]').value, panel.querySelector('[data-f=note]').value);
+      break;
+    }
+    case 'time-csv':
+      exportTimesheetCsv();
+      break;
+    case 'break-add':
+      state.clockSettings.breaks.push({ label: 'Break', minutes: 10, paid: true });
+      saveClockSettings();
+      renderTime();
+      break;
+    case 'break-remove':
+      state.clockSettings.breaks.splice(Number(btn.dataset.i), 1);
+      saveClockSettings();
+      renderTime();
       break;
     case 'sign-out':
       handleSignOut();
@@ -2685,6 +3099,22 @@ function onGlobalChange(e) {
   } else if (t.dataset.kind === 'select-home') {
     state.selectedHomeId = t.value;
     renderSchedule();
+  } else if (t.dataset.kind === 'time-from' || t.dataset.kind === 'time-to') {
+    if (!t.value) return;
+    state[t.dataset.kind === 'time-from' ? 'timeFrom' : 'timeTo'] = t.value;
+    if (state.timeTo < state.timeFrom) state.timeTo = state.timeFrom;
+    loadTimeRange().then(renderTime);
+  } else if (t.dataset.kind === 'clock-tz') {
+    state.clockSettings.timezone = t.value;
+    saveClockSettings();
+    loadTimeRange().then(renderTime);
+  } else if (t.dataset.kind === 'break-field') {
+    const b = state.clockSettings.breaks[Number(t.dataset.i)];
+    if (!b) return;
+    if (t.dataset.field === 'paid') b.paid = t.checked;
+    else if (t.dataset.field === 'minutes') { b.minutes = Math.min(240, Math.max(1, Math.round(Number(t.value) || b.minutes))); t.value = b.minutes; }
+    else b.label = t.value.trim().slice(0, 40) || 'Break';
+    saveClockSettings();
   } else if (t.dataset.kind === 'staff-field') {
     updateStaffField(t.dataset.id, t.dataset.field, t.value.trim());
   } else if (t.dataset.kind === 'staff-home') {
@@ -2732,7 +3162,7 @@ function toggleTheme() {
 const TOUR_SEEN_KEY = 'tello-staff-tour-seen';
 const TOUR_STEPS = [
   { modal: true, title: 'Welcome to Tello Staff', body: "A one-minute tour of the basics. Skip anytime with the button below, or reopen this tour later from the ❓ button, top right." },
-  { tab: 'schedule', view: 'week', selector: '.bottom-nav', title: 'Four tabs', body: 'Schedule is the roster. Today has a quote, reminders, birthdays, and a live shift summary. Staff is your directory. Chat lets you ask Tello questions about coverage.' },
+  { tab: 'schedule', view: 'week', selector: '.bottom-nav', title: 'Five tabs', body: 'Schedule is the roster. Today has a quote, reminders, birthdays, and a live shift summary. Time shows who is clocked in, timesheets, and break rules. Staff is your directory. Chat lets you ask Tello questions about coverage.' },
   { tab: 'schedule', view: 'week', selector: '.home-menu-wrap', title: 'Pick a home', body: 'Everything below is scoped to one home at a time — switch which one you\'re looking at right here.' },
   { tab: 'schedule', view: 'week', selector: '.view-toggle', title: 'Week, Month, or All Homes', body: 'Week is for quick edits. Month shows the whole month at once, like the printed page on the wall. All Homes shows every home side by side for a single day.' },
   { tab: 'schedule', view: 'week', selector: '.schedule-grid', title: 'Just type it', body: 'No dropdowns — type names straight into Working and Day Off, same as the paper schedule. It saves on its own a moment after you stop typing: the box flashes green when it lands, or a red banner appears at the top if something goes wrong.' },
@@ -2780,6 +3210,7 @@ async function renderTour() {
     else if (state.tab === 'today') await renderToday();
     else if (state.tab === 'chat') renderChat();
     else if (state.tab === 'staff') renderStaff();
+    else if (state.tab === 'time') renderTime();
   }
 
   if (!step.modal) {
