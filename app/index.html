@@ -750,7 +750,7 @@
   .time-edit-actions { display: flex; gap: 8px; }
   .break-rule { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
   .break-rule input[type="text"] { flex: 2; min-width: 110px; }
-  .break-rule input[type="number"] { flex: 1; min-width: 70px; max-width: 90px; }
+  .break-rule input[type="number"] { flex: 0 0 64px; width: 64px; min-width: 0; }
   .break-rule label.paid { display: flex; align-items: center; gap: 4px; font-size: 13px; }
   .time-print-title { display: none; }
   .time-select { background: var(--bg-input); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 14px; width: 100%; }
@@ -2566,6 +2566,12 @@ function fmtDayLabel(dayStr) {
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 function fmtHM(min) { min = Math.max(0, Math.round(min)); return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`; }
+// "1 hr 30 min", "10 min", "2 hr"
+function fmtShort(min) {
+  min = Math.max(0, Math.round(min));
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? (m ? `${h} hr ${m} min` : `${h} hr`) : `${m} min`;
+}
 function toLocalInput(iso) {
   const p = tzParts(new Date(iso), clockTz());
   return `${p.y}-${String(p.mo).padStart(2, '0')}-${String(p.d).padStart(2, '0')}T${String(p.h).padStart(2, '0')}:${String(p.mi).padStart(2, '0')}`;
@@ -2761,24 +2767,25 @@ function renderTime() {
       const st = stats[i];
       const flags = [];
       if (!e.clock_out) flags.push(['Still clocked in', overdueMinutes(e, now) > 0]);
-      if (st.over >= 1) flags.push([`Break over allowed by ${Math.round(st.over)} min${st.paidOver >= 1 ? ` (${Math.round(st.paidOver)} min of it in paid breaks — review)` : ''}`, false]);
+      if (st.over >= 1) flags.push([`Break over allowed by ${fmtShort(st.over)}${st.paidOver >= 1 ? ` (${fmtShort(st.paidOver)} of it in paid breaks — review)` : ''}`, false]);
       if (e.adjusted_at) flags.push([`Adjusted${e.adjusted_note ? ': ' + e.adjusted_note : ''}${e.orig_clock_in ? ` (was ${fmtT(e.orig_clock_in)}–${e.orig_clock_out ? fmtT(e.orig_clock_out) : 'open'})` : ''}`, false]);
       return `<div class="time-row">
         <div><div class="time-name">${esc(fmtDayLabel(dayStrIn(e.clock_in)))}</div>
-          <div class="time-sub">${esc(fmtT(e.clock_in))} – ${e.clock_out ? esc(fmtT(e.clock_out)) : '…'}${st.unpaid ? ` · unpaid breaks −${Math.round(st.unpaid)}m` : ''}${e.home_name ? ` · ${esc(e.home_name)}` : ''}</div>
+          <div class="time-sub">${esc(fmtT(e.clock_in))} – ${e.clock_out ? esc(fmtT(e.clock_out)) : '…'}${st.unpaid ? ` · unpaid breaks −${fmtShort(st.unpaid)}` : ''}${e.home_name ? ` · ${esc(e.home_name)}` : ''}</div>
           ${flags.map(([t, bad]) => `<div class="time-flag ${bad ? 'bad' : ''}">${esc(t)}</div>`).join('')}</div>
         <div style="display:flex;gap:8px;align-items:center"><span class="time-total">${fmtHM(st.worked)}</span>
           <button class="btn-outline small no-print" data-action="time-edit" data-id="${e.id}">Edit</button></div>
       </div>${state.editEntryId === e.id && !alertIds.has(e.id) ? editPanelHtml(e) : ''}`;
     }).join('');
-    return `<div class="time-staff-head"><span>${esc(g.name)}</span><span>${fmtHM(total)}${over >= 1 ? ` · breaks over ${Math.round(over)}m` : ''}</span></div>${rows}`;
+    return `<div class="time-staff-head"><span>${esc(g.name)}</span><span>${fmtHM(total)}${over >= 1 ? ` · breaks over ${fmtShort(over)}` : ''}</span></div>${rows}`;
   }).join('');
   const grand = state.timeEntries.reduce((a, e) => a + entryStats(e, now).worked, 0);
 
   const breakRules = cs.breaks.map((b, i) => `
     <div class="break-rule">
       <input type="text" data-kind="break-field" data-i="${i}" data-field="label" value="${esc(b.label)}" placeholder="Name" />
-      <input type="number" min="1" max="240" data-kind="break-field" data-i="${i}" data-field="minutes" value="${b.minutes}" /> <span class="time-sub">min</span>
+      <input type="number" min="0" max="12" inputmode="numeric" aria-label="Hours" data-kind="break-field" data-i="${i}" data-field="hours" value="${Math.floor(b.minutes / 60)}" /> <span class="time-sub">hr</span>
+      <input type="number" min="0" max="59" inputmode="numeric" aria-label="Minutes" data-kind="break-field" data-i="${i}" data-field="mins" value="${b.minutes % 60}" /> <span class="time-sub">min</span>
       <label class="paid"><input type="checkbox" data-kind="break-field" data-i="${i}" data-field="paid" ${b.paid ? 'checked' : ''} /> Paid</label>
       <button class="btn-remove" data-action="break-remove" data-i="${i}">✕</button>
     </div>`).join('');
@@ -3112,7 +3119,14 @@ function onGlobalChange(e) {
     const b = state.clockSettings.breaks[Number(t.dataset.i)];
     if (!b) return;
     if (t.dataset.field === 'paid') b.paid = t.checked;
-    else if (t.dataset.field === 'minutes') { b.minutes = Math.min(240, Math.max(1, Math.round(Number(t.value) || b.minutes))); t.value = b.minutes; }
+    else if (t.dataset.field === 'hours' || t.dataset.field === 'mins') {
+      const row = t.closest('.break-rule');
+      const h = Math.min(12, Math.max(0, Math.round(Number(row.querySelector('[data-field=hours]').value) || 0)));
+      const m = Math.min(59, Math.max(0, Math.round(Number(row.querySelector('[data-field=mins]').value) || 0)));
+      b.minutes = Math.max(1, h * 60 + m); // a break is at least 1 minute
+      row.querySelector('[data-field=hours]').value = Math.floor(b.minutes / 60);
+      row.querySelector('[data-field=mins]').value = b.minutes % 60;
+    }
     else b.label = t.value.trim().slice(0, 40) || 'Break';
     saveClockSettings();
   } else if (t.dataset.kind === 'staff-field') {
