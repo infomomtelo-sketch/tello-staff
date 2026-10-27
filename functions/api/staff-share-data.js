@@ -64,7 +64,7 @@ async function handleGet({ request, env }) {
   const { ok: linkOk, status: linkStatus, data: links } = await supabaseGet(linkQuery, serviceKey);
   if (!linkOk) {
     // Not "the link is bad" — the server itself could not read the database.
-    return json({ error: `The server could not check this link (database answered ${linkStatus}). The SUPABASE_SERVICE_ROLE_KEY setting in Cloudflare is probably missing or from a different Supabase project.` }, 502);
+    return json({ error: `The server could not check this link (database answered ${linkStatus}). The SUPABASE_SERVICE_ROLE_KEY setting in Cloudflare is probably missing or from a different Supabase project.` }, 500);
   }
   if (!Array.isArray(links) || links.length === 0 || !links[0].staff_id) {
     return json({ error: 'This link is invalid or has been revoked.' }, 404);

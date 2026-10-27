@@ -120,7 +120,7 @@ async function loadContext(token, serviceKey) {
   const { ok: linkOk, status: linkStatus, data: links } = await sbGet(
     `tello_staff_share_links?token=eq.${encodeURIComponent(token)}&revoked_at=is.null&select=*`, serviceKey);
   if (!linkOk) {
-    return { error: json({ error: `The server could not check this link (database answered ${linkStatus}). The SUPABASE_SERVICE_ROLE_KEY setting in Cloudflare is probably missing or from a different Supabase project.` }, 502) };
+    return { error: json({ error: `The server could not check this link (database answered ${linkStatus}). The SUPABASE_SERVICE_ROLE_KEY setting in Cloudflare is probably missing or from a different Supabase project.` }, 500) };
   }
   if (!Array.isArray(links) || !links.length || !links[0].staff_id) {
     return { error: json({ error: 'This link is invalid or has been revoked.' }, 404) };
@@ -269,7 +269,7 @@ async function handlePost({ request, env }) {
     if (!res.ok) {
       // The one-open-entry-per-person index turns a double tap into a conflict.
       if (res.status === 409) return stateResponse(ctx, now, serviceKey, { notice: 'already_in' });
-      return json({ error: 'Could not clock in. Try again in a moment.' }, 502);
+      return json({ error: 'Could not clock in. Try again in a moment.' }, 500);
     }
     return stateResponse(ctx, now, serviceKey, { notice: 'clocked_in' });
   }
@@ -284,7 +284,7 @@ async function handlePost({ request, env }) {
     if (!def) return json({ error: 'No more breaks are set up for a shift.' }, 409);
     const next = [...breaks, { label: def.label, allowed: def.minutes, paid: def.paid, start: nowIso }];
     if (!(await patchEntry(open.id, ctx.userId, { breaks: next }, serviceKey))) {
-      return json({ error: 'Could not start the break. Try again.' }, 502);
+      return json({ error: 'Could not start the break. Try again.' }, 500);
     }
     return stateResponse(ctx, now, serviceKey, { notice: 'break_started' });
   }
@@ -293,7 +293,7 @@ async function handlePost({ request, env }) {
     if (!openBreak) return stateResponse(ctx, now, serviceKey, { notice: 'not_on_break' });
     const next = breaks.map((b) => (b === openBreak ? { ...b, end: nowIso } : b));
     if (!(await patchEntry(open.id, ctx.userId, { breaks: next }, serviceKey))) {
-      return json({ error: 'Could not end the break. Try again.' }, 502);
+      return json({ error: 'Could not end the break. Try again.' }, 500);
     }
     return stateResponse(ctx, now, serviceKey, { notice: 'break_ended' });
   }
@@ -301,7 +301,7 @@ async function handlePost({ request, env }) {
   // out
   if (openBreak) return json({ error: 'End your break first, then clock out.' }, 409);
   if (!(await patchEntry(open.id, ctx.userId, { clock_out: nowIso, orig_clock_out: nowIso }, serviceKey))) {
-    return json({ error: 'Could not clock out. Try again.' }, 502);
+    return json({ error: 'Could not clock out. Try again.' }, 500);
   }
   return stateResponse(ctx, now, serviceKey, { notice: 'clocked_out' });
 }
