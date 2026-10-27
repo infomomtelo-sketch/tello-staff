@@ -210,7 +210,7 @@ async function stateResponse(ctx, now, serviceKey, extra = {}) {
   });
 }
 
-export async function onRequestGet({ request, env }) {
+async function handleGet({ request, env }) {
   const token = (new URL(request.url).searchParams.get('token') || '').trim();
   if (!token) return json({ error: 'Missing token' }, 400);
   const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
@@ -229,7 +229,7 @@ async function patchEntry(id, userId, patch, serviceKey) {
   return res.ok;
 }
 
-export async function onRequestPost({ request, env }) {
+async function handlePost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ error: 'Invalid JSON body' }, 400); }
   const token = typeof body?.token === 'string' ? body.token.trim() : '';
@@ -304,4 +304,20 @@ export async function onRequestPost({ request, env }) {
     return json({ error: 'Could not clock out. Try again.' }, 502);
   }
   return stateResponse(ctx, now, serviceKey, { notice: 'clocked_out' });
+}
+
+// Any unexpected crash comes back as JSON with the reason, never a bare HTML error page.
+export async function onRequestGet(ctx) {
+  try {
+    return await handleGet(ctx);
+  } catch (err) {
+    return json({ error: `Server error: ${err && err.message ? err.message : err}` }, 500);
+  }
+}
+export async function onRequestPost(ctx) {
+  try {
+    return await handlePost(ctx);
+  } catch (err) {
+    return json({ error: `Server error: ${err && err.message ? err.message : err}` }, 500);
+  }
 }
