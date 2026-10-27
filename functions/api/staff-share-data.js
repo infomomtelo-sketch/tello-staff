@@ -46,8 +46,8 @@ async function supabaseGet(path, serviceKey) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
   });
-  const data = await res.json();
-  return { ok: res.ok, data };
+  const data = await res.json().catch(() => null);
+  return { ok: res.ok, status: res.status, data };
 }
 
 export async function onRequestGet({ request, env }) {
@@ -61,8 +61,12 @@ export async function onRequestGet({ request, env }) {
   }
 
   const linkQuery = `tello_staff_share_links?token=eq.${encodeURIComponent(token)}&revoked_at=is.null&select=*`;
-  const { ok: linkOk, data: links } = await supabaseGet(linkQuery, serviceKey);
-  if (!linkOk || !Array.isArray(links) || links.length === 0 || !links[0].staff_id) {
+  const { ok: linkOk, status: linkStatus, data: links } = await supabaseGet(linkQuery, serviceKey);
+  if (!linkOk) {
+    // Not "the link is bad" — the server itself could not read the database.
+    return json({ error: `The server could not check this link (database answered ${linkStatus}). The SUPABASE_SERVICE_ROLE_KEY setting in Cloudflare is probably missing or from a different Supabase project.` }, 502);
+  }
+  if (!Array.isArray(links) || links.length === 0 || !links[0].staff_id) {
     return json({ error: 'This link is invalid or has been revoked.' }, 404);
   }
   const link = links[0];

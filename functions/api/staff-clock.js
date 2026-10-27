@@ -46,7 +46,7 @@ function sbHeaders(serviceKey, extra = {}) {
 async function sbGet(path, serviceKey) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: sbHeaders(serviceKey) });
   const data = await res.json().catch(() => null);
-  return { ok: res.ok, data };
+  return { ok: res.ok, status: res.status, data };
 }
 
 // ---- time zone helpers (Workers run in UTC, so do this explicitly) ----
@@ -117,9 +117,12 @@ function cleanSettings(raw) {
 
 // Everything the endpoint needs about who this link belongs to.
 async function loadContext(token, serviceKey) {
-  const { ok: linkOk, data: links } = await sbGet(
+  const { ok: linkOk, status: linkStatus, data: links } = await sbGet(
     `tello_staff_share_links?token=eq.${encodeURIComponent(token)}&revoked_at=is.null&select=*`, serviceKey);
-  if (!linkOk || !Array.isArray(links) || !links.length || !links[0].staff_id) {
+  if (!linkOk) {
+    return { error: json({ error: `The server could not check this link (database answered ${linkStatus}). The SUPABASE_SERVICE_ROLE_KEY setting in Cloudflare is probably missing or from a different Supabase project.` }, 502) };
+  }
+  if (!Array.isArray(links) || !links.length || !links[0].staff_id) {
     return { error: json({ error: 'This link is invalid or has been revoked.' }, 404) };
   }
   const link = links[0];
