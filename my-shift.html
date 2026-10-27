@@ -250,6 +250,12 @@ function fmtDur(min) {
   return h ? (m ? `${hp} ${mp}` : hp) : mp;
 }
 // "1 hr 30 min", "10 min", "2 hr" — compact form for buttons and labels.
+// As a describing word: "10 minute", "1 hour 30 minute" (for "a 10 minute rest break").
+function fmtAdj(min) {
+  min = Math.max(0, Math.round(min));
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? (m ? `${h} hour ${m} minute` : `${h} hour`) : `${m} minute`;
+}
 function fmtShort(min) {
   min = Math.max(0, Math.round(min));
   const h = Math.floor(min / 60), m = min % 60;
@@ -320,7 +326,7 @@ function sayOnce(key, text) {
 function breaksSpoken() {
   const b = (clock.data && clock.data.breaks) || [];
   if (!b.length) return '';
-  const parts = b.map((x) => `a ${fmtDur(x.minutes)} ${x.label.toLowerCase()}${x.paid ? '' : ' (unpaid)'}`);
+  const parts = b.map((x) => `a ${fmtAdj(x.minutes)} ${x.label.toLowerCase()}${x.paid ? '' : ' (unpaid)'}`);
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
   return `Remember your breaks today: ${list}.`;
 }
@@ -337,7 +343,7 @@ function voiceCheck() {
   if (e) {
     const ob = openBreakOf(e);
     if (ob && ob.allowed > 0 && (now - new Date(ob.start).getTime()) / 60000 >= ob.allowed) {
-      sayOnce(`bu:${e.id}:${e.breaks.length}`, `Your ${fmtDur(ob.allowed)} ${ob.label.toLowerCase()} is up. Please tap End break when you are back.`);
+      sayOnce(`bu:${e.id}:${e.breaks.length}`, `Your ${fmtAdj(ob.allowed)} ${ob.label.toLowerCase()} is up. Please tap End break when you are back.`);
     }
     const endIso = e.sched_end;
     if (endIso) {
