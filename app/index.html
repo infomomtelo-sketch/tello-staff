@@ -775,6 +775,13 @@
     .app-main { padding-bottom: 0; }
     html, body, .app, .app-scroll { height: auto !important; overflow: visible !important; }
   }
+  /* Voice typing: one floating mic that fills whichever text box is focused. */
+  .voice-mic { position: fixed; right: 16px; bottom: 84px; z-index: 400; width: 52px; height: 52px; border-radius: 50%; border: none; background: var(--accent); color: var(--accent-contrast); font-size: 24px; line-height: 1; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; }
+  .voice-mic.show { display: flex; }
+  .voice-mic.listening { background: #d64545; color: #fff; animation: voicePulse 1.1s ease-in-out infinite; }
+  @keyframes voicePulse { 0%,100% { box-shadow: 0 0 0 0 rgba(214,69,69,0.55); } 50% { box-shadow: 0 0 0 14px rgba(214,69,69,0); } }
+  .voice-note { position: fixed; right: 16px; bottom: 144px; z-index: 400; max-width: min(320px, calc(100vw - 32px)); padding: 8px 12px; border-radius: 10px; background: var(--card, #1f3d31); color: var(--text, #fff); border: 1px solid var(--accent); font-size: 13px; line-height: 1.35; display: none; box-shadow: 0 4px 14px rgba(0,0,0,0.3); }
+  .voice-note.show { display: block; }
 </style>
 </head>
 <body>
@@ -3297,7 +3304,135 @@ function init() {
   });
 }
 
+// ---- Voice typing ----------------------------------------------------------
+// One floating mic button follows whichever plain text box is focused (works on
+// every box, including ones drawn later, because it listens at document level).
+// Uses the browser's built-in speech-to-text; hidden where that isn't offered.
+// Note: Chrome/Safari send the audio to Google/Apple to turn it into text.
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const voice = { rec: null, target: null, listening: false, btn: null, note: null, hideTimer: null, noteTimer: null };
+
+function voiceEligible(el) {
+  if (!el || el.disabled || el.readOnly) return false;
+  if (el.tagName === 'TEXTAREA') return true;
+  if (el.tagName !== 'INPUT') return false;
+  const type = (el.getAttribute('type') || 'text').toLowerCase();
+  return type === 'text' || type === 'search';
+}
+
+// "7 p.m." / "7 p m" -> "7pm" so spoken shift times match the Working-line pattern.
+function voiceCleanText(text, el) {
+  let s = String(text || '').trim();
+  s = s.replace(/\b(\d{1,2}(?::\d{2})?)\s*([ap])\.?\s?m\.?/gi, (_, n, ap) => `${n}${ap.toLowerCase()}m`);
+  s = s.replace(/\s*\b(?:new|next) line\b\.?\s*/gi, '\n');
+  if (el && el.tagName === 'INPUT') s = s.replace(/\n/g, ' ');
+  if (el && el.tagName === 'INPUT' && /^(name|role)$/.test(el.name || el.dataset.field || '')) s = s.replace(/[.,]+$/, '');
+  return s.trim();
+}
+
+function voiceSay(msg, ms) {
+  if (!voice.note) return;
+  clearTimeout(voice.noteTimer);
+  if (!msg) { voice.note.classList.remove('show'); return; }
+  voice.note.textContent = msg;
+  voice.note.classList.add('show');
+  if (ms) voice.noteTimer = setTimeout(() => voice.note.classList.remove('show'), ms);
+}
+
+function voiceInsert(text) {
+  const el = voice.target;
+  if (!el || !document.contains(el)) { voiceSay('Tap the box again, then the mic.', 3500); return; }
+  const clean = voiceCleanText(text, el);
+  if (!clean) return;
+  const isDayBox = el.classList.contains('day-input') && el.tagName === 'TEXTAREA';
+  const start = el.selectionStart == null ? el.value.length : el.selectionStart;
+  const end = el.selectionEnd == null ? el.value.length : el.selectionEnd;
+  const before = el.value.slice(0, start);
+  let lead = '';
+  if (before && !/[\s\n]$/.test(before)) lead = isDayBox ? '\n' : ' ';
+  el.setRangeText(lead + clean, start, end, 'end');
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function voiceStop() { if (voice.rec) { try { voice.rec.stop(); } catch { /* already stopped */ } } }
+
+function voiceStart() {
+  if (!SpeechRec || voice.listening) return;
+  if (!voice.target || !document.contains(voice.target)) { voiceSay('Tap a box first, then the mic.', 3000); return; }
+  const rec = new SpeechRec();
+  voice.rec = rec;
+  rec.lang = navigator.language || 'en-US';
+  rec.interimResults = true;
+  rec.continuous = false;
+  let finalText = '';
+  rec.onstart = () => { voice.listening = true; voice.btn.classList.add('listening'); voiceSay('Listening… tap the mic again when done.'); };
+  rec.onresult = (ev) => {
+    let interim = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (r.isFinal) finalText += r[0].transcript + ' '; else interim += r[0].transcript;
+    }
+    voiceSay('Listening… ' + (finalText + interim).trim());
+  };
+  rec.onerror = (ev) => {
+    const msgs = {
+      'not-allowed': 'Microphone is blocked. Allow it for this site in your browser settings.',
+      'service-not-allowed': 'Microphone is blocked. Allow it for this site in your browser settings.',
+      'no-speech': "Didn't hear anything. Tap the mic and try again.",
+      'audio-capture': 'No microphone found.',
+      'network': 'Voice needs an internet connection.',
+    };
+    if (ev.error !== 'aborted') voiceSay(msgs[ev.error] || `Voice typing stopped (${ev.error}).`, 4500);
+    finalText = '';
+  };
+  rec.onend = () => {
+    voice.listening = false;
+    voice.btn.classList.remove('listening');
+    if (finalText.trim()) { voiceInsert(finalText); voiceSay('Added. Check it, then keep going.', 2500); }
+    else if (voice.note.textContent.startsWith('Listening')) voiceSay('');
+    if (voice.target && document.contains(voice.target)) { try { voice.target.focus(); } catch { /* ignore */ } }
+    voiceUpdateButton();
+  };
+  try { rec.start(); } catch { voiceSay('Voice typing could not start. Try again.', 3500); }
+}
+
+function voiceUpdateButton() {
+  if (!voice.btn) return;
+  const show = voice.listening || voiceEligible(document.activeElement) || (voice.target && document.contains(voice.target) && voice.hideTimer);
+  voice.btn.classList.toggle('show', !!show);
+}
+
+function initVoiceTyping() {
+  if (!SpeechRec) return;
+  voice.btn = document.createElement('button');
+  voice.btn.type = 'button';
+  voice.btn.className = 'voice-mic';
+  voice.btn.setAttribute('aria-label', 'Speak instead of typing');
+  voice.btn.textContent = '🎤';
+  voice.note = document.createElement('div');
+  voice.note.className = 'voice-note';
+  voice.note.setAttribute('role', 'status');
+  document.body.appendChild(voice.btn);
+  document.body.appendChild(voice.note);
+  // Keep the text box focused while the mic is tapped.
+  voice.btn.addEventListener('mousedown', (e) => e.preventDefault());
+  voice.btn.addEventListener('click', () => { if (voice.listening) voiceStop(); else voiceStart(); });
+  document.addEventListener('focusin', (e) => {
+    if (!voiceEligible(e.target)) return;
+    clearTimeout(voice.hideTimer); voice.hideTimer = null;
+    voice.target = e.target;
+    voiceUpdateButton();
+  });
+  document.addEventListener('focusout', () => {
+    clearTimeout(voice.hideTimer);
+    voice.hideTimer = setTimeout(() => { voice.hideTimer = null; voiceUpdateButton(); }, 1500);
+    voiceUpdateButton();
+  });
+}
+
 init();
+initVoiceTyping();
 </script>
 </body>
 </html>
