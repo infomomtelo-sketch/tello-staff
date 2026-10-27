@@ -50,7 +50,7 @@ async function supabaseGet(path, serviceKey) {
   return { ok: res.ok, status: res.status, data };
 }
 
-export async function onRequestGet({ request, env }) {
+async function handleGet({ request, env }) {
   const url = new URL(request.url);
   const token = (url.searchParams.get('token') || '').trim();
   if (!token) return json({ error: 'Missing token' }, 400);
@@ -153,4 +153,13 @@ export async function onRequestGet({ request, env }) {
     nextMonth: monthKey(nextMonthDate.getFullYear(), nextMonthDate.getMonth()),
     days,
   });
+}
+
+// Any unexpected crash comes back as JSON with the reason, never a bare HTML error page.
+export async function onRequestGet(ctx) {
+  try {
+    return await handleGet(ctx);
+  } catch (err) {
+    return json({ error: `Server error: ${err && err.message ? err.message : err}` }, 500);
+  }
 }

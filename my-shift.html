@@ -120,6 +120,17 @@ function fmtDateLabel(dateStr) {
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+// Read a reply as JSON; if the server sent something else (an error page, say), say so plainly
+// instead of letting the browser's cryptic parse error ("string did not match the expected pattern") through.
+async function readJson(res) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error(`The server sent an unexpected reply (HTTP ${res.status}). Please try again in a moment; if it keeps happening, tell the admin.`);
+  }
+}
+
 function renderError(message) {
   document.getElementById('content').innerHTML = `
     <div class="shift-state">
@@ -203,7 +214,7 @@ async function loadAndRender(token, month) {
     const params = new URLSearchParams({ token });
     if (month) params.set('month', month);
     const res = await fetch(`/api/staff-share-data?${params.toString()}`);
-    const data = await res.json();
+    const data = await readJson(res);
     if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
     renderSchedule(data, token);
   } catch (err) {
@@ -379,7 +390,7 @@ async function loadClock() {
   if (!TOKEN || clock.busy) return;
   try {
     const res = await fetch(`/api/staff-clock?token=${encodeURIComponent(TOKEN)}`);
-    const data = await res.json();
+    const data = await readJson(res);
     if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
     applyClockData(data);
   } catch (err) {
@@ -401,7 +412,7 @@ async function punch(action) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: TOKEN, action }),
     });
-    const data = await res.json();
+    const data = await readJson(res);
     if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
     const before = clock.data;
     applyClockData(data);
