@@ -1,0 +1,3 @@
+# Short address for the admin app: staff.tello.live/admin -> /app/
+/admin /app/ 302
+/admin/ /app/ 302
