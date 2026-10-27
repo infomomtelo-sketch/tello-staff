@@ -2567,7 +2567,7 @@ function fmtDayLabel(dayStr) {
 }
 function fmtHM(min) { min = Math.max(0, Math.round(min)); return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`; }
 // "1 hr 30 min", "10 min", "2 hr"
-function fmtShort(min) {
+function fmtHrMin(min) {
   min = Math.max(0, Math.round(min));
   const h = Math.floor(min / 60), m = min % 60;
   return h ? (m ? `${h} hr ${m} min` : `${h} hr`) : `${m} min`;
@@ -2767,17 +2767,17 @@ function renderTime() {
       const st = stats[i];
       const flags = [];
       if (!e.clock_out) flags.push(['Still clocked in', overdueMinutes(e, now) > 0]);
-      if (st.over >= 1) flags.push([`Break over allowed by ${fmtShort(st.over)}${st.paidOver >= 1 ? ` (${fmtShort(st.paidOver)} of it in paid breaks — review)` : ''}`, false]);
+      if (st.over >= 1) flags.push([`Break over allowed by ${fmtHrMin(st.over)}${st.paidOver >= 1 ? ` (${fmtHrMin(st.paidOver)} of it in paid breaks — review)` : ''}`, false]);
       if (e.adjusted_at) flags.push([`Adjusted${e.adjusted_note ? ': ' + e.adjusted_note : ''}${e.orig_clock_in ? ` (was ${fmtT(e.orig_clock_in)}–${e.orig_clock_out ? fmtT(e.orig_clock_out) : 'open'})` : ''}`, false]);
       return `<div class="time-row">
         <div><div class="time-name">${esc(fmtDayLabel(dayStrIn(e.clock_in)))}</div>
-          <div class="time-sub">${esc(fmtT(e.clock_in))} – ${e.clock_out ? esc(fmtT(e.clock_out)) : '…'}${st.unpaid ? ` · unpaid breaks −${fmtShort(st.unpaid)}` : ''}${e.home_name ? ` · ${esc(e.home_name)}` : ''}</div>
+          <div class="time-sub">${esc(fmtT(e.clock_in))} – ${e.clock_out ? esc(fmtT(e.clock_out)) : '…'}${st.unpaid ? ` · unpaid breaks −${fmtHrMin(st.unpaid)}` : ''}${e.home_name ? ` · ${esc(e.home_name)}` : ''}</div>
           ${flags.map(([t, bad]) => `<div class="time-flag ${bad ? 'bad' : ''}">${esc(t)}</div>`).join('')}</div>
         <div style="display:flex;gap:8px;align-items:center"><span class="time-total">${fmtHM(st.worked)}</span>
           <button class="btn-outline small no-print" data-action="time-edit" data-id="${e.id}">Edit</button></div>
       </div>${state.editEntryId === e.id && !alertIds.has(e.id) ? editPanelHtml(e) : ''}`;
     }).join('');
-    return `<div class="time-staff-head"><span>${esc(g.name)}</span><span>${fmtHM(total)}${over >= 1 ? ` · breaks over ${fmtShort(over)}` : ''}</span></div>${rows}`;
+    return `<div class="time-staff-head"><span>${esc(g.name)}</span><span>${fmtHM(total)}${over >= 1 ? ` · breaks over ${fmtHrMin(over)}` : ''}</span></div>${rows}`;
   }).join('');
   const grand = state.timeEntries.reduce((a, e) => a + entryStats(e, now).worked, 0);
 
