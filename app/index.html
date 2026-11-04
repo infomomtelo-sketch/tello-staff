@@ -754,6 +754,16 @@
   .break-rule label.paid { display: flex; align-items: center; gap: 4px; font-size: 13px; }
   .time-print-title { display: none; }
   .time-select { background: var(--bg-input); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 14px; width: 100%; }
+  .code-box { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; word-break: break-all; margin-bottom: 6px; }
+  .geo-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .geo-row:last-child { border-bottom: none; }
+  .geo-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .geo-controls input[type="text"] { flex: 1; min-width: 150px; }
+  .geo-controls input[type="number"] { width: 72px; min-width: 0; }
+  .proof-btns { display: flex; gap: 6px; }
+  .photo-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .92); z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; gap: 12px; cursor: pointer; }
+  .photo-overlay img { max-width: 100%; max-height: 70vh; border-radius: 12px; }
+  .photo-overlay .photo-cap { color: #fff; font-size: 14px; text-align: center; max-width: 480px; }
 
   @media print {
     body { background: #fff; }
@@ -901,6 +911,10 @@ const state = {
   chatMessages: [],
   chatSending: false,
   staff: [],
+  clockKey: null,
+  clockOrigins: [],
+  clockCreds: {},
+  clockMsg: '',
   clockSettings: null,
   timeFrom: null,
   timeTo: null,
@@ -1128,6 +1142,8 @@ async function loadConfig(userId) {
   const { data, error } = await sb.from('tello_staff_config').select('*').eq('user_id', userId).maybeSingle();
   if (error) { console.error(error); showErrorBanner(`Couldn't load your homes and reliever setup — ${error.message}`); }
   state.clockSettings = mergeClockSettings(data && data.clock_settings);
+  state.clockKey = (data && data.clock_key) || null;
+  state.clockOrigins = Array.isArray(data && data.clock_allowed_origins) ? data.clock_allowed_origins : [];
   if (data) {
     state.config = {
       homes: (data.homes && data.homes.length) ? data.homes : defaultConfig().homes,
@@ -2685,6 +2701,7 @@ async function saveEntryAdjustment(id, inVal, outVal, note) {
   await refreshOpenEntries();
   await loadTimeRange();
   renderTime();
+  if (state.clockKey) { await loadClockCreds(); renderTime(); }
 }
 
 function csvCell(v) {
@@ -2708,6 +2725,155 @@ function exportTimesheetCsv() {
   a.download = `tello-timesheets-${state.timeFrom}-to-${state.timeTo}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+// ---- Photo + location proof on each punch (schema_clock_v2.sql) ----
+// The selfie is a plain photo for the admin to look at — no face matching. It
+// sits in a private bucket (only this admin can read it) and is deleted after
+// 90 days by the punch endpoint; the hours themselves are kept.
+const CLOCK_PHOTO_BUCKET = 'clock-photos';
+const DEFAULT_GEO_RADIUS = 150;
+
+function fmtMeters(m) {
+  return m >= 1000 ? `${(m / 1609.344).toFixed(1)} mi` : `${Math.max(1, Math.round(m))} m`;
+}
+function proofLine(e) {
+  const parts = [];
+  if (e.in_distance_m != null) parts.push(`in ${fmtMeters(e.in_distance_m)} from home`);
+  if (e.out_distance_m != null) parts.push(`out ${fmtMeters(e.out_distance_m)} from home`);
+  return parts.length ? `📍 ${parts.join(' · ')}` : '';
+}
+function proofButtons(e) {
+  const b = [];
+  if (e.in_photo) b.push(`<button class="btn-outline small no-print" data-action="clock-photo" data-id="${e.id}" data-which="in">📷 In</button>`);
+  if (e.out_photo) b.push(`<button class="btn-outline small no-print" data-action="clock-photo" data-id="${e.id}" data-which="out">📷 Out</button>`);
+  return b.length ? `<div class="proof-btns">${b.join('')}</div>` : '';
+}
+async function viewClockPhoto(id, which) {
+  const e = [...state.timeEntries, ...state.openAll].find((x) => x.id === id);
+  const path = e && (which === 'in' ? e.in_photo : e.out_photo);
+  if (!path) return;
+  const { data, error } = await sb.storage.from(CLOCK_PHOTO_BUCKET).createSignedUrl(path, 300);
+  if (error || !data) {
+    alert(`Couldn't open the photo — ${error ? error.message : 'it may have been deleted (photos are kept 90 days).'}`);
+    return;
+  }
+  const at = which === 'in' ? e.clock_in : e.clock_out;
+  const dist = which === 'in' ? e.in_distance_m : e.out_distance_m;
+  const ov = document.createElement('div');
+  ov.className = 'photo-overlay';
+  ov.innerHTML = `<img alt="Clock ${which} photo" src="${esc(data.signedUrl)}" />
+    <div class="photo-cap">${esc(e.staff_name)} · clocked ${which} ${esc(fmtDayLabel(dayStrIn(at)))} ${esc(fmtT(at))}${e.home_name ? ` · ${esc(e.home_name)}` : ''}${dist != null ? ` · ${esc(fmtMeters(dist))} from home` : ''}<br><span style="opacity:.7">Tap anywhere to close</span></div>`;
+  ov.addEventListener('click', () => ov.remove());
+  document.body.appendChild(ov);
+}
+
+// ---- Home locations (used to check where a punch happens) ----
+function homeGeo(h) {
+  const g = h && h.geo;
+  return g && Number.isFinite(Number(g.lat)) && Number.isFinite(Number(g.lng)) ? g : null;
+}
+function setHomeGeo(id, lat, lng) {
+  const home = state.config.homes.find((h) => h.id === id);
+  if (!home) return;
+  const prev = homeGeo(home);
+  home.geo = { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6, radius: prev ? prev.radius : DEFAULT_GEO_RADIUS };
+  saveConfig();
+  renderTime();
+}
+function setHomeGeoHere(id) {
+  if (!navigator.geolocation) { alert("This browser can't share its location. Paste the home's coordinates instead."); return; }
+  navigator.geolocation.getCurrentPosition((p) => {
+    if (p.coords.accuracy > 100 && !confirm(`Your phone's location is only accurate to about ${Math.round(p.coords.accuracy)} m right now. Save it anyway?`)) return;
+    setHomeGeo(id, p.coords.latitude, p.coords.longitude);
+  }, () => alert("Couldn't get your location. Allow location for this page, or paste the home's coordinates instead."),
+  { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+}
+// ---------------------------------------------------------------------------
+// Time clock app: clock key, allowed websites, staff employee numbers + PINs
+// ---------------------------------------------------------------------------
+function clockUrl(kiosk) { return `${location.origin}/clock/?k=${state.clockKey}${kiosk ? '&kiosk=1' : ''}`; }
+function clockEmbedSnippet() { return '<scr' + `ipt src="${location.origin}/embed.js" data-key="${state.clockKey}" async><` + '/scr' + 'ipt>'; }
+function normalizeOrigin(v) {
+  let t = String(v || '').trim();
+  if (!t) return null;
+  if (!/^https?:\/\//i.test(t)) t = 'https://' + t;
+  try {
+    const u = new URL(t);
+    if (u.protocol !== 'https:' && !(u.hostname === 'localhost')) return null;
+    return u.origin;
+  } catch (e) { return null; }
+}
+async function saveClockApp() {
+  const { error } = await sb.from('tello_staff_config').update({ clock_key: state.clockKey, clock_allowed_origins: state.clockOrigins }).eq('user_id', state.user.id);
+  if (error) { showErrorBanner(`Couldn't save the time clock setup — ${error.message}. Did you run schema_clock_v3.sql?`); return false; }
+  return true;
+}
+async function loadClockCreds() {
+  const { data, error } = await sb.from('tello_staff_clock_credentials').select('staff_id,emp_no,pin_set,failed_count,locked_until').eq('user_id', state.user.id);
+  if (error) { state.clockMsg = 'Could not load staff sign-ins (run schema_clock_v3.sql).'; return; }
+  state.clockCreds = {};
+  (data || []).forEach((r) => { state.clockCreds[r.staff_id] = r; });
+}
+async function clockAdminCall(body) {
+  const { data: sess } = await sb.auth.getSession();
+  const token = sess && sess.session && sess.session.access_token;
+  const res = await fetch('/api/clock-admin', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+  let out = {};
+  try { out = await res.json(); } catch (e) { /* ignore */ }
+  if (!res.ok) throw new Error(out.error || `Request failed (${res.status})`);
+  return out;
+}
+function clockAppHtml() {
+  if (!state.clockKey) {
+    return `<h4 class="sub">Time clock app</h4>
+      <p class="time-sub" style="margin-bottom:8px">Staff clock in and out on their own page (or on a button added to your website) with their name or employee number + a 4-digit PIN. They can only clock in/out and see their own schedule and hours.</p>
+      <button class="btn-primary small" data-action="clock-app-on">Turn on the time clock app</button>`;
+  }
+  const origins = state.clockOrigins.map((o, i) => `<div class="time-sub" style="display:flex;gap:8px;align-items:center"><code>${esc(o)}</code><button class="btn-outline small" data-action="clock-origin-remove" data-i="${i}">Remove</button></div>`).join('') || '<div class="time-sub">None yet — the button can only be added to the websites you list here.</div>';
+  const rows = state.staff.map((s) => {
+    const c = state.clockCreds[s.id];
+    const locked = c && c.locked_until && new Date(c.locked_until) > new Date();
+    return `<div class="geo-row"><div class="time-name">${esc(s.name)}</div>
+      <div class="time-sub">${c ? `Employee # ${esc(c.emp_no)} · PIN ${c.pin_set ? 'set' : 'not set'}${locked ? ' · LOCKED (too many wrong PINs)' : ''}` : 'Not set up for the time clock'}</div>
+      <div class="geo-controls">
+        <button class="btn-outline small" data-action="clock-pin-set" data-id="${s.id}">${c && c.pin_set ? 'Reset PIN' : 'Set PIN'}</button>
+        ${c ? `<button class="btn-outline small" data-action="clock-emp-set" data-id="${s.id}">Change number</button><button class="btn-outline small" data-action="clock-pin-clear" data-id="${s.id}">Remove</button>` : ''}
+      </div></div>`;
+  }).join('') || '<div class="time-sub">Add staff first.</div>';
+  return `<h4 class="sub">Time clock app</h4>
+    ${state.clockMsg ? `<div class="time-sub" style="margin-bottom:8px"><b>${esc(state.clockMsg)}</b></div>` : ''}
+    <p class="time-sub" style="margin-bottom:6px">Staff page (put on a tablet or phone):</p>
+    <div class="code-box">${esc(clockUrl(false))}</div>
+    <div class="geo-controls"><button class="btn-outline small" data-action="clock-copy" data-what="url">Copy link</button>
+      <button class="btn-outline small" data-action="clock-copy" data-what="kiosk">Copy tablet link (signs out after each punch)</button></div>
+    <p class="time-sub" style="margin:10px 0 6px">Add to your website — paste this one line before &lt;/body&gt;:</p>
+    <div class="code-box">${esc(clockEmbedSnippet())}</div>
+    <div class="geo-controls"><button class="btn-outline small" data-action="clock-copy" data-what="embed">Copy website code</button></div>
+    <p class="time-sub" style="margin:10px 0 6px"><b>Allowed websites</b> (the button only works on these)</p>
+    ${origins}
+    <div class="geo-controls"><input type="text" id="clockOriginInput" placeholder="https://title-22.com" /><button class="btn-outline small" data-action="clock-origin-add">Add</button></div>
+    <p class="time-sub" style="margin:12px 0 6px"><b>Staff sign-in</b> — employee number + 4-digit PIN. Give the PIN to the person privately; it is shown only once and cannot be looked up later.</p>
+    ${rows}
+    <div class="geo-controls" style="margin-top:10px"><button class="btn-outline small" data-action="clock-key-regen">New clock key (old links stop working)</button>
+      <button class="btn-outline small" data-action="clock-app-off">Turn off</button></div>`;
+}
+
+function homeLocationsHtml() {
+  return state.config.homes.map((h) => {
+    const g = homeGeo(h);
+    const radius = g && Number.isFinite(Number(g.radius)) ? Number(g.radius) : DEFAULT_GEO_RADIUS;
+    return `<div class="geo-row">
+      <div class="time-name">${esc(h.name)}</div>
+      <div class="time-sub">${g ? `Location saved (${Number(g.lat).toFixed(5)}, ${Number(g.lng).toFixed(5)})` : 'No location saved — clock in/out is NOT location-checked for this home'}</div>
+      <div class="geo-controls">
+        <button class="btn-outline small" data-action="home-geo-here" data-id="${h.id}">📍 Use my current location</button>
+        <input type="text" data-kind="home-geo-paste" data-id="${h.id}" placeholder="or paste: 36.7378, -119.7871" />
+      </div>
+      ${g ? `<div class="geo-controls"><label class="time-sub">Allowed distance from home <input type="number" min="50" max="500" step="25" inputmode="numeric" data-kind="home-geo-radius" data-id="${h.id}" value="${radius}" /> m</label>
+        <button class="btn-outline small" data-action="home-geo-clear" data-id="${h.id}">Clear location</button></div>` : ''}
+    </div>`;
+  }).join('');
 }
 
 function editPanelHtml(e) {
@@ -2743,8 +2909,9 @@ function renderTime() {
         return `<div class="time-row">
           <div><div class="time-name">${esc(e.staff_name)}</div>
             <div class="time-sub">${esc(e.home_name || 'Home not matched')} · in at ${esc(fmtT(e.clock_in))}${e.sched_end ? ` · shift ends ${esc(fmtT(e.sched_end))}` : ''}</div>
-            <div class="time-flag ${od ? 'bad' : ''}">${od ? 'Possibly forgot to clock out' : (ob ? `On ${esc(ob.label.toLowerCase())}` : 'Working')}</div></div>
-          <div class="time-total">${fmtHM(st.worked)}</div>
+            <div class="time-flag ${od ? 'bad' : ''}">${od ? 'Possibly forgot to clock out' : (ob ? `On ${esc(ob.label.toLowerCase())}` : 'Working')}</div>
+            ${proofLine(e) ? `<div class="time-sub">${esc(proofLine(e))}</div>` : ''}</div>
+          <div style="display:flex;gap:8px;align-items:center">${proofButtons(e)}<div class="time-total">${fmtHM(st.worked)}</div></div>
         </div>`;
       }).join('')
     : `<div class="muted">Nobody is clocked in right now.</div>`;
@@ -2779,8 +2946,9 @@ function renderTime() {
       return `<div class="time-row">
         <div><div class="time-name">${esc(fmtDayLabel(dayStrIn(e.clock_in)))}</div>
           <div class="time-sub">${esc(fmtT(e.clock_in))} – ${e.clock_out ? esc(fmtT(e.clock_out)) : '…'}${st.unpaid ? ` · unpaid breaks −${fmtHrMin(st.unpaid)}` : ''}${e.home_name ? ` · ${esc(e.home_name)}` : ''}</div>
-          ${flags.map(([t, bad]) => `<div class="time-flag ${bad ? 'bad' : ''}">${esc(t)}</div>`).join('')}</div>
-        <div style="display:flex;gap:8px;align-items:center"><span class="time-total">${fmtHM(st.worked)}</span>
+          ${flags.map(([t, bad]) => `<div class="time-flag ${bad ? 'bad' : ''}">${esc(t)}</div>`).join('')}
+          ${proofLine(e) ? `<div class="time-sub no-print">${esc(proofLine(e))}</div>` : ''}</div>
+        <div style="display:flex;gap:8px;align-items:center">${proofButtons(e)}<span class="time-total">${fmtHM(st.worked)}</span>
           <button class="btn-outline small no-print" data-action="time-edit" data-id="${e.id}">Edit</button></div>
       </div>${state.editEntryId === e.id && !alertIds.has(e.id) ? editPanelHtml(e) : ''}`;
     }).join('');
@@ -2797,8 +2965,15 @@ function renderTime() {
       <button class="btn-remove" data-action="break-remove" data-i="${i}">✕</button>
     </div>`).join('');
 
+  const homesNoGeo = state.config.homes.filter((h) => !homeGeo(h));
+  const geoBanner = homesNoGeo.length
+    ? `<section class="card no-print"><div class="time-flag bad">📍 ${homesNoGeo.length} of ${state.config.homes.length} home${state.config.homes.length === 1 ? '' : 's'} ${homesNoGeo.length === 1 ? 'has' : 'have'} no location saved.</div>
+        <div class="time-sub" style="margin-top:4px">Until a home has a location, staff can still clock in and out from anywhere for it. Set it under Clock settings → Home locations (below). Everyone still has to take a photo.</div></section>`
+    : '';
+
   view.innerHTML = `
     ${state.timeError ? `<section class="card"><div class="time-flag bad">${esc(state.timeError)}</div></section>` : ''}
+    ${geoBanner}
     ${alertHtml}
     <section class="card no-print">
       <h3>On the clock now</h3>
@@ -2832,6 +3007,11 @@ function renderTime() {
       <button class="btn-outline small" data-action="break-add">+ Add a break</button>
       <h4 class="sub">Time zone</h4>
       <select class="time-select" data-kind="clock-tz">${TZ_OPTIONS.map(([v, l]) => `<option value="${v}" ${cs.timezone === v ? 'selected' : ''}>${esc(l)}</option>`).concat(TZ_OPTIONS.some(([v]) => v === cs.timezone) ? [] : [`<option value="${esc(cs.timezone)}" selected>${esc(cs.timezone)}</option>`]).join('')}</select>
+      ${clockAppHtml()}
+      <h4 class="sub">Home locations</h4>
+      <p class="time-sub" style="margin-bottom:6px">Staff can clock in or out only within the allowed distance of their home. Stand at the home and tap "Use my current location", or paste the coordinates (in Google Maps, press and hold the home, then tap the numbers). The location is read from a staff member's phone only at the moment they tap Clock In or Clock Out. If someone is blocked but really worked, fix their hours with Edit in Timesheets.</p>
+      ${homeLocationsHtml()}
+      <p class="time-sub" style="margin-top:10px">Each clock in/out also saves a photo of the person for you to review (tap 📷 on a timesheet row). No face matching is done. Photos are deleted automatically after 90 days; the hours stay.</p>
     </section>
   `;
 }
@@ -2912,6 +3092,84 @@ function onGlobalClick(e) {
       state.clockSettings.breaks.splice(Number(btn.dataset.i), 1);
       saveClockSettings();
       renderTime();
+      break;
+    case 'home-geo-here':
+      setHomeGeoHere(btn.dataset.id);
+      break;
+    case 'home-geo-clear': {
+      const home = state.config.homes.find((h) => h.id === btn.dataset.id);
+      if (home && confirm(`Clear the saved location for ${home.name}? Clock in/out will not be location-checked for it.`)) {
+        delete home.geo;
+        saveConfig();
+        renderTime();
+      }
+      break;
+    }
+    case 'clock-app-on': {
+      const b = new Uint8Array(18); crypto.getRandomValues(b);
+      state.clockKey = btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_');
+      saveClockApp().then((ok) => { if (!ok) state.clockKey = null; renderTime(); if (ok) loadClockCreds().then(renderTime); });
+      break;
+    }
+    case 'clock-app-off':
+      if (confirm('Turn off the time clock app? The staff page and website button will stop working. PINs are kept.')) {
+        const old = state.clockKey; state.clockKey = null;
+        saveClockApp().then((ok) => { if (!ok) state.clockKey = old; renderTime(); });
+      }
+      break;
+    case 'clock-key-regen':
+      if (confirm('Make a new clock key? The old staff link and website code stop working until you replace them.')) {
+        const old = state.clockKey; const b = new Uint8Array(18); crypto.getRandomValues(b);
+        state.clockKey = btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_');
+        saveClockApp().then((ok) => { if (!ok) state.clockKey = old; renderTime(); });
+      }
+      break;
+    case 'clock-copy': {
+      const text = btn.dataset.what === 'embed' ? clockEmbedSnippet() : clockUrl(btn.dataset.what === 'kiosk');
+      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => { state.clockMsg = 'Copied.'; renderTime(); }, () => prompt('Copy this:', text));
+      break;
+    }
+    case 'clock-origin-add': {
+      const o = normalizeOrigin(document.getElementById('clockOriginInput').value);
+      if (!o) { alert('Enter a website like https://title-22.com (must be https).'); break; }
+      if (!state.clockOrigins.includes(o)) state.clockOrigins.push(o);
+      saveClockApp().then(renderTime);
+      break;
+    }
+    case 'clock-origin-remove':
+      state.clockOrigins.splice(Number(btn.dataset.i), 1);
+      saveClockApp().then(renderTime);
+      break;
+    case 'clock-pin-set': {
+      const s = state.staff.find((x) => x.id === btn.dataset.id);
+      const typed = prompt(`New 4-digit PIN for ${s.name}? Leave empty and press OK to make a random one.`, '');
+      if (typed === null) break;
+      if (typed && !/^\d{4}$/.test(typed.trim())) { alert('A PIN is exactly 4 digits.'); break; }
+      clockAdminCall({ action: 'set_pin', staffId: s.id, pin: typed.trim() || undefined }).then(async (out) => {
+        await loadClockCreds();
+        state.clockMsg = out.pin ? `${s.name}'s PIN is ${out.pin} — write it down now, it will not be shown again.` : `PIN saved for ${s.name}.`;
+        renderTime();
+        if (out.pin) alert(`${s.name}'s new PIN: ${out.pin}\n\nGive it to them privately. It will not be shown again.`);
+      }).catch((e) => alert(e.message));
+      break;
+    }
+    case 'clock-emp-set': {
+      const s = state.staff.find((x) => x.id === btn.dataset.id);
+      const cur = state.clockCreds[s.id] ? state.clockCreds[s.id].emp_no : '';
+      const v = prompt(`Employee number for ${s.name}:`, cur);
+      if (!v || !v.trim()) break;
+      clockAdminCall({ action: 'set_emp', staffId: s.id, empNo: v.trim() }).then(async () => { await loadClockCreds(); renderTime(); }).catch((e) => alert(e.message));
+      break;
+    }
+    case 'clock-pin-clear': {
+      const s = state.staff.find((x) => x.id === btn.dataset.id);
+      if (confirm(`Remove ${s.name} from the time clock? They will not be able to sign in.`)) {
+        clockAdminCall({ action: 'clear_pin', staffId: s.id }).then(async () => { await loadClockCreds(); renderTime(); }).catch((e) => alert(e.message));
+      }
+      break;
+    }
+    case 'clock-photo':
+      viewClockPhoto(btn.dataset.id, btn.dataset.which);
       break;
     case 'sign-out':
       handleSignOut();
@@ -3122,6 +3380,17 @@ function onGlobalChange(e) {
     state.clockSettings.timezone = t.value;
     saveClockSettings();
     loadTimeRange().then(renderTime);
+  } else if (t.dataset.kind === 'home-geo-paste') {
+    const m = /^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/.exec(t.value);
+    if (!m || Math.abs(+m[1]) > 90 || Math.abs(+m[2]) > 180) { alert('Paste the coordinates like 36.7378, -119.7871 (latitude, then longitude).'); return; }
+    setHomeGeo(t.dataset.id, +m[1], +m[2]);
+  } else if (t.dataset.kind === 'home-geo-radius') {
+    const home = state.config.homes.find((h) => h.id === t.dataset.id);
+    if (home && homeGeo(home)) {
+      home.geo.radius = Math.min(500, Math.max(50, Math.round(Number(t.value) || DEFAULT_GEO_RADIUS)));
+      saveConfig();
+      renderTime();
+    }
   } else if (t.dataset.kind === 'break-field') {
     const b = state.clockSettings.breaks[Number(t.dataset.i)];
     if (!b) return;
