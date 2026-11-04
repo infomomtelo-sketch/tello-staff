@@ -86,6 +86,16 @@
   .tello-say b { color: var(--accent); }
   .voice-btn { margin-top: 12px; background: none; border: 1px dashed var(--border); color: var(--text-muted); border-radius: 10px; padding: 8px 12px; font: inherit; font-size: 13px; cursor: pointer; }
   .clock-err { color: #e88a84; font-size: 13px; margin-top: 10px; }
+  .consent-box { text-align: left; background: rgba(232, 193, 92, .08); border: 1px solid rgba(232, 193, 92, .45); border-radius: 12px; padding: 14px; margin-top: 16px; font-size: 14px; }
+  .consent-box ul { margin: 8px 0 4px 18px; padding: 0; }
+  .consent-box li { margin-bottom: 6px; }
+  .consent-box label { display: flex; gap: 10px; align-items: flex-start; margin: 12px 0; font-weight: 700; }
+  .consent-box input[type=checkbox] { width: 22px; height: 22px; flex: none; margin: 0; }
+  .consent-box a { color: var(--accent); }
+  .cam-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .94); z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; gap: 14px; }
+  .cam-overlay video { width: 100%; max-width: 420px; border-radius: 16px; background: #000; transform: scaleX(-1); }
+  .cam-overlay .cam-msg { color: #fff; font-size: 14px; text-align: center; max-width: 420px; }
+  .cam-overlay .cam-actions { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 420px; }
   .hours-card { margin-top: 28px; text-align: left; }
   .hours-card h2 { font-size: 16px; margin: 0 0 10px; }
   .hours-week { display: flex; justify-content: space-between; font-weight: 700; font-size: 13px; margin: 14px 0 6px; color: var(--accent); }
@@ -245,7 +255,7 @@ function init() {
 // open and after one tap — when the phone is asleep the reminder shows up
 // here as soon as the page is opened again.
 let TOKEN = null;
-const clock = { data: null, offset: 0, busy: false, err: '', say: '', voiceReady: false };
+const clock = { data: null, offset: 0, busy: false, err: '', say: '', voiceReady: false, tick: false };
 const spoken = new Set();
 
 function nowMs() { return Date.now() + clock.offset; }
@@ -405,6 +415,79 @@ async function loadClock() {
   renderClock();
 }
 
+// ---- Photo + location, taken at the moment of Clock In / Clock Out ----
+// The location is read once per punch and sent with it — it is never tracked in
+// the background. The photo comes from the live front camera (no photo library).
+function getFix() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("This phone or browser can't share its location. Open this page in Chrome or Safari."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, at: Date.now() }),
+      (err) => reject(new Error(err.code === 1
+        ? 'Location is blocked for this page. Allow location in your browser settings, then try again.'
+        : 'Could not get your location. Go near a window or outside, make sure Location is on, and try again.')),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+    );
+  });
+}
+
+// Full-screen front camera. Resolves with a small JPEG data URL, or null if cancelled.
+function takeSelfie(buttonLabel) {
+  return new Promise((resolve, reject) => {
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+      reject(new Error("This browser can't open the camera. Open this page in Chrome or Safari (not inside another app) and try again."));
+      return;
+    }
+    let stream = null;
+    const ov = document.createElement('div');
+    ov.className = 'cam-overlay';
+    ov.innerHTML = `<div class="cam-msg" id="camMsg">Starting camera…</div>
+      <video playsinline muted autoplay></video>
+      <div class="cam-actions">
+        <button type="button" class="clock-btn primary" id="camShot" disabled>${esc(buttonLabel)}</button>
+        <button type="button" class="clock-btn" id="camCancel">Cancel</button>
+      </div>`;
+    document.body.appendChild(ov);
+    const video = ov.querySelector('video');
+    const stop = () => { if (stream) stream.getTracks().forEach((t) => t.stop()); ov.remove(); };
+    ov.querySelector('#camCancel').addEventListener('click', () => { stop(); resolve(null); });
+    ov.querySelector('#camShot').addEventListener('click', () => {
+      if (!video.videoWidth) return;
+      const w = Math.min(480, video.videoWidth);
+      const h = Math.round((w * video.videoHeight) / video.videoWidth);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(video, 0, 0, w, h);
+      const url = c.toDataURL('image/jpeg', 0.6);
+      stop();
+      resolve(url);
+    });
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false })
+      .then((s) => {
+        stream = s;
+        video.srcObject = s;
+        // Only allow the shot once the camera is actually showing a picture.
+        const ready = () => {
+          if (!video.videoWidth) return;
+          ov.querySelector('#camMsg').textContent = 'Look at the camera. Only you should be in the photo.';
+          ov.querySelector('#camShot').disabled = false;
+        };
+        video.addEventListener('loadeddata', ready);
+        video.addEventListener('playing', ready);
+        ready();
+      })
+      .catch((err) => {
+        stop();
+        reject(new Error(err && err.name === 'NotAllowedError'
+          ? 'Camera is blocked for this page. Allow the camera in your browser settings, then try again.'
+          : 'Could not start the camera. Close other apps that use it and try again.'));
+      });
+  });
+}
+
 async function punch(action) {
   if (clock.busy) return;
   unlockVoice();
@@ -413,13 +496,32 @@ async function punch(action) {
   clock.err = '';
   renderClock();
   try {
+    const payload = { token: TOKEN, action };
+    if (action === 'in' || action === 'out') {
+      const needLoc = !!(clock.data && clock.data.locationRequired);
+      // Start asking for location right away so it is ready when the photo is taken.
+      const fixP = needLoc ? getFix() : null;
+      if (fixP) fixP.catch(() => {});
+      const photo = await takeSelfie(action === 'in' ? 'Take photo & clock in' : 'Take photo & clock out');
+      if (!photo) { clock.busy = false; renderClock(); return; }
+      payload.photo = photo;
+      if (needLoc) {
+        let fix = await fixP;
+        if (Date.now() - fix.at > 60000) fix = await getFix(); // camera sat open a while — take a fresh reading
+        payload.position = { lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy };
+      }
+    }
     const res = await fetch('/api/staff-clock', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: TOKEN, action }),
+      body: JSON.stringify(payload),
     });
     const data = await readJson(res);
-    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    if (!res.ok) {
+      const e = new Error(data.error || `Request failed (${res.status})`);
+      e.code = data.code;
+      throw e;
+    }
     const before = clock.data;
     applyClockData(data);
     clock.busy = false;
@@ -427,8 +529,46 @@ async function punch(action) {
   } catch (err) {
     clock.err = err.message;
     clock.busy = false;
+    if (err.code === 'consent_required') { await loadClock(); return; }
   }
   renderClock();
+}
+
+async function giveConsent() {
+  if (clock.busy) return;
+  if (!clock.tick) { clock.err = 'Tick the box to agree first.'; renderClock(); return; }
+  clock.busy = true;
+  clock.err = '';
+  renderClock();
+  try {
+    const res = await fetch('/api/staff-clock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, action: 'consent', version: clock.data.consentVersion }),
+    });
+    const data = await readJson(res);
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    applyClockData(data);
+  } catch (err) {
+    clock.err = err.message;
+  }
+  clock.busy = false;
+  renderClock();
+}
+
+function consentHtml(d) {
+  return `<div class="consent-box">
+    <b>Before you clock in or out</b>
+    <ul>
+      <li>When you tap Clock In or Clock Out, the app takes a photo of you with your phone's camera.</li>
+      <li>If your employer has set the home's location, your phone's location is checked too — once, at that moment only. It is never tracked in the background.</li>
+      <li>Your employer can see the photo and how far from the home you were. It is used only to confirm that you are the person clocking in or out, at the home. No face scan or face matching is done.</li>
+      <li>Photos are deleted after ${esc(d.photoDays || 90)} days. Your hours stay on your timesheet. Nothing is sold or shared. <a href="/privacy.html" target="_blank" rel="noopener">Privacy policy</a></li>
+      <li>If you don't agree, don't tick the box — tell your admin.</li>
+    </ul>
+    <label><input type="checkbox" id="consentOk" ${clock.tick ? 'checked' : ''} /> I understand and agree</label>
+    <button type="button" class="clock-btn primary" data-consent="1" ${clock.busy ? 'disabled' : ''}>Continue</button>
+  </div>`;
 }
 
 function afterPunch(data, before) {
@@ -477,10 +617,11 @@ function renderClock() {
   const shiftLine = nextShift
     ? `Your shift: ${esc(nextShift.homeName)} · ${esc(nextShift.startLabel)}–${esc(nextShift.endLabel)}`
     : 'No shift with a start and end time on your schedule right now.';
+  const needConsent = !d.consented;
   if (!e) {
     status = 'Not clocked in';
     sub = shiftLine;
-    actions = `<button type="button" class="clock-btn primary" data-punch="in" ${clock.busy ? 'disabled' : ''}>Clock In</button>`;
+    if (!needConsent) actions = `<button type="button" class="clock-btn primary" data-punch="in" ${clock.busy ? 'disabled' : ''}>Clock In</button>`;
   } else if (ob) {
     status = `On ${esc(ob.label.toLowerCase())}`;
     sub = `${fmtShort(ob.allowed)} allowed · ${ob.paid ? 'paid' : 'unpaid'}`;
@@ -492,7 +633,7 @@ function renderClock() {
     body = `<div class="clock-timer" id="clockTimer">0:00:00</div><div class="clock-sub">worked so far (unpaid breaks taken out)</div>`;
     const def = d.breaks[(e.breaks || []).length];
     if (def) actions += `<button type="button" class="clock-btn" data-punch="break_start" ${clock.busy ? 'disabled' : ''}>Start ${esc(def.label.toLowerCase())} (${fmtShort(def.minutes)}${def.paid ? '' : ', unpaid'})</button>`;
-    actions += `<button type="button" class="clock-btn danger" data-punch="out" ${clock.busy ? 'disabled' : ''}>Clock Out</button>`;
+    if (!needConsent) actions += `<button type="button" class="clock-btn danger" data-punch="out" ${clock.busy ? 'disabled' : ''}>Clock Out</button>`;
   }
   card.innerHTML = `
     <div class="clock-card">
@@ -501,12 +642,17 @@ function renderClock() {
       <div class="clock-sub">${sub}</div>
       ${body}
       <div class="clock-actions">${actions}</div>
+      ${needConsent && !ob ? consentHtml(d) : ''}
       ${clock.err ? `<div class="clock-err">${esc(clock.err)}</div>` : ''}
       ${clock.say ? `<div class="tello-say" id="telloSay"><b>Tello:</b> ${esc(clock.say)}</div>` : ''}
       ${clock.voiceReady ? '' : '<button type="button" class="voice-btn" data-voice="1">🔊 Tap to let Tello speak</button>'}
-      <div class="clock-sub" style="margin-top:12px">Times are recorded by the server. Tello speaks while this page is open.</div>
+      <div class="clock-sub" style="margin-top:12px">Times are recorded by the server. Clocking in or out takes a photo${d.locationRequired ? ' and checks your location at that moment' : ''}. Tello speaks while this page is open.</div>
     </div>`;
   card.querySelectorAll('[data-punch]').forEach((b) => b.addEventListener('click', () => punch(b.dataset.punch)));
+  const ck = card.querySelector('#consentOk');
+  if (ck) ck.addEventListener('change', () => { clock.tick = ck.checked; });
+  const cb = card.querySelector('[data-consent]');
+  if (cb) cb.addEventListener('click', giveConsent);
   const vb = card.querySelector('[data-voice]');
   if (vb) vb.addEventListener('click', () => { unlockVoice(); telloSay('Hi, I am Tello. I will remind you before your shift starts and ends.'); });
   renderHours();

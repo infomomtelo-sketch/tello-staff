@@ -17,9 +17,43 @@
 // confirm): unpaid breaks are deducted at their ACTUAL length; paid-break
 // overage is only flagged for the admin to review; the app only REPORTS
 // break overage and never tells anyone to shorten a later break.
+//
+// Who is punching, and where (schema_clock_v2.sql). The link token only says
+// WHICH staff member's clock this is, so every clock-in and clock-out must also
+// carry (1) a live selfie and (2) the phone's location at that moment:
+//   * consent — the person must have accepted the photo/location notice
+//     (CONSENT_VERSION) before their first punch; recorded in
+//     tello_staff_clock_consent.
+//   * location — checked HERE on the server against the home's saved location
+//     (homes[].geo = { lat, lng, radius } set by the admin in the Time tab). A
+//     punch outside the radius is refused; the admin can still correct hours in
+//     the Time tab, so no worked time is lost. A home with no saved location is
+//     not location-checked (and no location is collected for it). Location is
+//     read ONLY at the moment of a punch — never tracked in the background.
+//   * photo — stored in the private 'clock-photos' bucket for the admin to
+//     review; deleted automatically after PHOTO_DAYS. This is a plain photo for
+//     a person to look at: NO face matching, NO face template is ever created.
+// The browser can be fooled by a mocked GPS or a held-up photo, so the photo
+// trail is what lets the admin catch a "punch for me" — this is a deterrent and
+// an audit record, not proof.
 
 const SUPABASE_URL = 'https://nwlhsshvqmbhemhxcran.supabase.co';
 const DEFAULT_TZ = 'America/Los_Angeles';
+
+const CONSENT_VERSION = '2026-11';   // bump when the notice text changes
+const PHOTO_BUCKET = 'clock-photos';
+const PHOTO_DAYS = 90;                // retention for clock-in/out photos
+const MAX_PHOTO_BYTES = 250000;
+const DEFAULT_RADIUS_M = 150;         // home radius when the admin leaves it at the default
+const MAX_ACCURACY_M = 150;           // refuse a fix less precise than this
+const ACCURACY_CREDIT_M = 100;        // GPS wobble indoors: forgive up to this much
+
+// Fields staff never need back (photo paths, coordinates).
+const PRIVATE_ENTRY_FIELDS = [
+  'in_photo', 'out_photo',
+  'in_lat', 'in_lng', 'in_accuracy_m', 'in_distance_m',
+  'out_lat', 'out_lng', 'out_accuracy_m', 'out_distance_m',
+];
 
 // Placeholder break rules until the admin sets real ones (clock_settings on
 // tello_staff_config). Applied to every shift, in the order listed.
@@ -102,6 +136,133 @@ function namesMatch(a, b) {
   return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 }
 
+// ---- location + photo helpers ----
+function validGeo(g) {
+  if (!g) return false;
+  const lat = Number(g.lat), lng = Number(g.lng);
+  return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+}
+
+function radiusOf(g) {
+  const r = Number(g.radius);
+  return Number.isFinite(r) ? Math.min(500, Math.max(50, Math.round(r))) : DEFAULT_RADIUS_M;
+}
+
+// Great-circle distance in metres.
+function distanceM(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const rad = (d) => (d * Math.PI) / 180;
+  const dLat = rad(lat2 - lat1);
+  const dLng = rad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+function fmtDist(m) {
+  return m < 1000 ? `${Math.max(1, Math.round(m))} m` : `${(m / 1609.344).toFixed(1)} miles`;
+}
+
+function readPosition(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const lat = Number(raw.lat), lng = Number(raw.lng), accuracy = Number(raw.accuracy);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  if (!Number.isFinite(accuracy) || accuracy < 0) return null;
+  return { lat, lng, accuracy };
+}
+
+// Is this fix inside the home it should be at? `homeName` is the home the
+// shift/entry belongs to (null = any home that has a saved location).
+function checkLocation(ctx, pos, homeName, verb) {
+  const geoHomes = ctx.homes.filter((h) => validGeo(h.geo));
+  if (!geoHomes.length) return { enforced: false };
+  let targets = geoHomes;
+  if (homeName) {
+    const named = ctx.homes.filter((h) => namesMatch(h.name, homeName));
+    if (named.length) {
+      targets = named.filter((h) => validGeo(h.geo));
+      if (!targets.length) return { enforced: false }; // that home has no saved location yet
+    }
+  }
+  if (!pos) {
+    return { enforced: true, error: 'location_required', message: `Your location is needed to clock ${verb}. Allow location for this page in your browser, then try again.` };
+  }
+  if (pos.accuracy > MAX_ACCURACY_M) {
+    return { enforced: true, error: 'location_imprecise', message: `Your phone's location isn't precise enough right now (about ${Math.round(pos.accuracy)} m). Turn on precise location, step near a window or outside, and try again.` };
+  }
+  let best = null;
+  targets.forEach((h) => {
+    const dist = distanceM(pos.lat, pos.lng, Number(h.geo.lat), Number(h.geo.lng));
+    if (!best || dist < best.dist) best = { home: h, dist };
+  });
+  const credit = Math.min(pos.accuracy, ACCURACY_CREDIT_M);
+  if (best.dist - credit > radiusOf(best.home.geo)) {
+    return {
+      enforced: true,
+      error: 'outside_area',
+      message: `You're about ${fmtDist(best.dist)} from ${best.home.name}. You need to be at the home to clock ${verb}. If you are at work and this looks wrong, tell your admin.`,
+    };
+  }
+  return { enforced: true, ok: true, home: best.home, dist: best.dist };
+}
+
+// "data:image/jpeg;base64,..." → bytes (null if it isn't a plausible JPEG).
+function decodePhoto(raw) {
+  if (typeof raw !== 'string') return null;
+  const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(raw);
+  if (!m || m[1].length > MAX_PHOTO_BYTES * 1.4) return null;
+  let bin;
+  try { bin = atob(m[1]); } catch { return null; }
+  if (bin.length < 800 || bin.length > MAX_PHOTO_BYTES) return null; // tiny = not a real camera frame
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) return null;
+  return bytes;
+}
+
+async function putPhoto(path, bytes, serviceKey) {
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${PHOTO_BUCKET}/${path}`, {
+    method: 'POST',
+    headers: sbHeaders(serviceKey, { 'Content-Type': 'image/jpeg', 'x-upsert': 'false' }),
+    body: bytes,
+  });
+  return res.ok;
+}
+
+async function deletePhotos(paths, serviceKey) {
+  if (!paths.length) return;
+  await fetch(`${SUPABASE_URL}/storage/v1/object/${PHOTO_BUCKET}`, {
+    method: 'DELETE',
+    headers: sbHeaders(serviceKey, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ prefixes: paths }),
+  });
+}
+
+// Retention: photos older than PHOTO_DAYS are deleted. Runs after a punch (staff
+// punch daily), a bounded batch at a time; the time record itself is untouched.
+async function purgeOldPhotos(ctx, now, serviceKey) {
+  try {
+    const cutoff = new Date(now.getTime() - PHOTO_DAYS * 86400000).toISOString();
+    const { ok, data } = await sbGet(
+      `tello_staff_clock_entries?user_id=eq.${ctx.userId}&clock_in=lt.${cutoff}&or=(in_photo.not.is.null,out_photo.not.is.null)&select=id,in_photo,out_photo&limit=50`,
+      serviceKey);
+    if (!ok || !Array.isArray(data) || !data.length) return;
+    const paths = [];
+    data.forEach((r) => { if (r.in_photo) paths.push(r.in_photo); if (r.out_photo) paths.push(r.out_photo); });
+    await deletePhotos(paths, serviceKey);
+    await fetch(`${SUPABASE_URL}/rest/v1/tello_staff_clock_entries?id=in.(${data.map((r) => r.id).join(',')})&user_id=eq.${ctx.userId}`, {
+      method: 'PATCH',
+      headers: sbHeaders(serviceKey, { 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
+      body: JSON.stringify({ in_photo: null, out_photo: null }),
+    });
+  } catch { /* retention is best-effort; it retries on the next punch */ }
+}
+
+function publicEntry(e) {
+  const c = { ...e };
+  PRIVATE_ENTRY_FIELDS.forEach((f) => { delete c[f]; });
+  return c;
+}
+
 function cleanSettings(raw) {
   const s = { timezone: DEFAULT_TZ, breaks: DEFAULT_SETTINGS.breaks };
   if (raw && typeof raw.timezone === 'string') {
@@ -133,12 +294,19 @@ async function loadContext(token, serviceKey) {
   }
   const { data: cfgRows } = await sbGet(`tello_staff_config?user_id=eq.${link.user_id}&select=homes,clock_settings`, serviceKey);
   const cfg = Array.isArray(cfgRows) && cfgRows[0] ? cfgRows[0] : { homes: [], clock_settings: null };
+  const { ok: consentOk, data: consentRows } = await sbGet(
+    `tello_staff_clock_consent?user_id=eq.${link.user_id}&staff_id=eq.${encodeURIComponent(link.staff_id)}&consent_version=eq.${CONSENT_VERSION}&select=consented_at`,
+    serviceKey);
+  if (!consentOk) {
+    return { error: json({ error: 'The photo and location check is not set up yet. The admin needs to run schema_clock_v2.sql in Supabase.' }, 500) };
+  }
   return {
     userId: link.user_id,
     staffId: link.staff_id,
     staffName: staffRows[0].name,
     homes: cfg.homes || [],
     settings: cleanSettings(cfg.clock_settings),
+    consented: Array.isArray(consentRows) && consentRows.length > 0,
   };
 }
 
@@ -204,8 +372,13 @@ async function stateResponse(ctx, now, serviceKey, extra = {}) {
     timezone: ctx.settings.timezone,
     breaks: ctx.settings.breaks,
     shifts,
-    open,
-    entries,
+    open: open ? publicEntry(open) : null,
+    entries: entries.map(publicEntry),
+    consented: !!ctx.consented,
+    consentVersion: CONSENT_VERSION,
+    // Tells the page whether to ask the phone for its location at a punch.
+    locationRequired: ctx.homes.some((h) => validGeo(h.geo)),
+    photoDays: PHOTO_DAYS,
     ...extra,
   });
 }
@@ -229,13 +402,14 @@ async function patchEntry(id, userId, patch, serviceKey) {
   return res.ok;
 }
 
-async function handlePost({ request, env }) {
+async function handlePost(context) {
+  const { request, env } = context;
   let body;
   try { body = await request.json(); } catch { return json({ error: 'Invalid JSON body' }, 400); }
   const token = typeof body?.token === 'string' ? body.token.trim() : '';
   const action = body?.action;
   if (!token) return json({ error: 'Missing token' }, 400);
-  if (!['in', 'break_start', 'break_end', 'out'].includes(action)) return json({ error: 'Unknown action' }, 400);
+  if (!['consent', 'in', 'break_start', 'break_end', 'out'].includes(action)) return json({ error: 'Unknown action' }, 400);
   const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!serviceKey) return json({ error: 'SUPABASE_SERVICE_ROLE_KEY is not configured on the server' }, 500);
 
@@ -243,18 +417,53 @@ async function handlePost({ request, env }) {
   if (ctx.error) return ctx.error;
   const now = new Date();
   const nowIso = now.toISOString();
+
+  // The person accepts the photo + location notice once (per notice version).
+  if (action === 'consent') {
+    if (body.version !== CONSENT_VERSION) return json({ error: 'The notice was updated. Reload this page and try again.' }, 409);
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/tello_staff_clock_consent?on_conflict=user_id,staff_id,consent_version`, {
+      method: 'POST',
+      headers: sbHeaders(serviceKey, { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' }),
+      body: JSON.stringify({ user_id: ctx.userId, staff_id: ctx.staffId, consent_version: CONSENT_VERSION }),
+    });
+    if (!res.ok) return json({ error: 'Could not save your answer. Try again in a moment.' }, 500);
+    ctx.consented = true;
+    return stateResponse(ctx, now, serviceKey, { notice: 'consented' });
+  }
+
   const { open } = await loadEntries(ctx, now, serviceKey);
+  const needsProof = action === 'in' || (action === 'out' && open);
+  if (needsProof && !ctx.consented) {
+    return json({ error: 'Please read and accept the photo and location notice first.', code: 'consent_required' }, 403);
+  }
+  const cleanup = () => {
+    const job = purgeOldPhotos(ctx, now, serviceKey);
+    if (typeof context.waitUntil === 'function') context.waitUntil(job);
+    return job;
+  };
 
   if (action === 'in') {
     if (open) return stateResponse(ctx, now, serviceKey, { notice: 'already_in' });
+    const photo = decodePhoto(body.photo);
+    if (!photo) return json({ error: 'A photo is needed to clock in. Please try again.', code: 'photo_required' }, 400);
     // Attach the scheduled shift this punch most plausibly belongs to.
     const shifts = await loadShifts(ctx, now, serviceKey);
     const t = now.getTime();
     const match = shifts.find((s) => t >= new Date(s.start).getTime() - 60 * 60000 && t <= new Date(s.end).getTime() + 2 * 3600000);
+    const pos = readPosition(body.position);
+    const loc = checkLocation(ctx, pos, match ? match.homeName : null, 'in');
+    if (loc.error) return json({ error: loc.message, code: loc.error }, 403);
+
+    const entryId = crypto.randomUUID();
+    const photoPath = `${ctx.userId}/${entryId}-in.jpg`;
+    if (!(await putPhoto(photoPath, photo, serviceKey))) {
+      return json({ error: 'Could not save your photo. Try again in a moment.' }, 500);
+    }
     const res = await fetch(`${SUPABASE_URL}/rest/v1/tello_staff_clock_entries`, {
       method: 'POST',
       headers: sbHeaders(serviceKey, { 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
       body: JSON.stringify({
+        id: entryId,
         user_id: ctx.userId,
         staff_id: ctx.staffId,
         staff_name: ctx.staffName,
@@ -264,13 +473,18 @@ async function handlePost({ request, env }) {
         clock_in: nowIso,
         orig_clock_in: nowIso,
         breaks: [],
+        in_photo: photoPath,
+        // Location is only kept when it was actually checked.
+        ...(loc.enforced ? { in_lat: pos.lat, in_lng: pos.lng, in_accuracy_m: pos.accuracy, in_distance_m: Math.round(loc.dist) } : {}),
       }),
     });
     if (!res.ok) {
+      await deletePhotos([photoPath], serviceKey).catch(() => {});
       // The one-open-entry-per-person index turns a double tap into a conflict.
       if (res.status === 409) return stateResponse(ctx, now, serviceKey, { notice: 'already_in' });
       return json({ error: 'Could not clock in. Try again in a moment.' }, 500);
     }
+    await cleanup();
     return stateResponse(ctx, now, serviceKey, { notice: 'clocked_in' });
   }
 
@@ -300,9 +514,26 @@ async function handlePost({ request, env }) {
 
   // out
   if (openBreak) return json({ error: 'End your break first, then clock out.' }, 409);
-  if (!(await patchEntry(open.id, ctx.userId, { clock_out: nowIso, orig_clock_out: nowIso }, serviceKey))) {
+  const photo = decodePhoto(body.photo);
+  if (!photo) return json({ error: 'A photo is needed to clock out. Please try again.', code: 'photo_required' }, 400);
+  const pos = readPosition(body.position);
+  const loc = checkLocation(ctx, pos, open.home_name, 'out');
+  if (loc.error) return json({ error: loc.message, code: loc.error }, 403);
+  const photoPath = `${ctx.userId}/${open.id}-out.jpg`;
+  if (!(await putPhoto(photoPath, photo, serviceKey))) {
+    return json({ error: 'Could not save your photo. Try again in a moment.' }, 500);
+  }
+  const patch = {
+    clock_out: nowIso,
+    orig_clock_out: nowIso,
+    out_photo: photoPath,
+    ...(loc.enforced ? { out_lat: pos.lat, out_lng: pos.lng, out_accuracy_m: pos.accuracy, out_distance_m: Math.round(loc.dist) } : {}),
+  };
+  if (!(await patchEntry(open.id, ctx.userId, patch, serviceKey))) {
+    await deletePhotos([photoPath], serviceKey).catch(() => {});
     return json({ error: 'Could not clock out. Try again.' }, 500);
   }
+  await cleanup();
   return stateResponse(ctx, now, serviceKey, { notice: 'clocked_out' });
 }
 
