@@ -50,26 +50,54 @@ async function supabaseGet(path, serviceKey) {
   return { ok: res.ok, status: res.status, data };
 }
 
+// Session tokens issued by /api/staff-clock after an employee-number + PIN
+// sign-in (same signing as staff-clock.js). They let the signed-in clock page
+// show that person's own schedule.
+const enc = new TextEncoder();
+function b64urlToBytes(str) {
+  const b = atob(str.replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(b, (c) => c.charCodeAt(0));
+}
+async function readSession(token, serviceKey) {
+  try {
+    const [body, sig] = String(token || '').split('.');
+    if (!body || !sig) return null;
+    const key = await crypto.subtle.importKey('raw', enc.encode(`tello-clock-session:${serviceKey}`), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+    if (!(await crypto.subtle.verify('HMAC', key, b64urlToBytes(sig), enc.encode(body)))) return null;
+    const p = JSON.parse(new TextDecoder().decode(b64urlToBytes(body)));
+    return p && p.u && p.s && p.exp > Date.now() ? p : null;
+  } catch { return null; }
+}
+
 async function handleGet({ request, env }) {
   const url = new URL(request.url);
+  const auth = request.headers.get('Authorization') || '';
+  const sessionToken = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
   const token = (url.searchParams.get('token') || '').trim();
-  if (!token) return json({ error: 'Missing token' }, 400);
+  if (!token && !sessionToken) return json({ error: 'Missing token' }, 400);
 
   const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!serviceKey) {
     return json({ error: 'SUPABASE_SERVICE_ROLE_KEY is not configured on the server' }, 500);
   }
 
-  const linkQuery = `tello_staff_share_links?token=eq.${encodeURIComponent(token)}&revoked_at=is.null&select=*`;
-  const { ok: linkOk, status: linkStatus, data: links } = await supabaseGet(linkQuery, serviceKey);
-  if (!linkOk) {
-    // Not "the link is bad" — the server itself could not read the database.
-    return json({ error: `The server could not check this link (database answered ${linkStatus}). The SUPABASE_SERVICE_ROLE_KEY setting in Cloudflare is probably missing or from a different Supabase project.` }, 500);
+  let link;
+  if (sessionToken) {
+    const sess = await readSession(sessionToken, serviceKey);
+    if (!sess) return json({ error: 'Please sign in again.', code: 'signin_required' }, 401);
+    link = { user_id: sess.u, staff_id: sess.s };
+  } else {
+    const linkQuery = `tello_staff_share_links?token=eq.${encodeURIComponent(token)}&revoked_at=is.null&select=*`;
+    const { ok: linkOk, status: linkStatus, data: links } = await supabaseGet(linkQuery, serviceKey);
+    if (!linkOk) {
+      // Not "the link is bad" — the server itself could not read the database.
+      return json({ error: `The server could not check this link (database answered ${linkStatus}). The SUPABASE_SERVICE_ROLE_KEY setting in Cloudflare is probably missing or from a different Supabase project.` }, 500);
+    }
+    if (!Array.isArray(links) || links.length === 0 || !links[0].staff_id) {
+      return json({ error: 'This link is invalid or has been revoked.' }, 404);
+    }
+    link = links[0];
   }
-  if (!Array.isArray(links) || links.length === 0 || !links[0].staff_id) {
-    return json({ error: 'This link is invalid or has been revoked.' }, 404);
-  }
-  const link = links[0];
 
   const { ok: staffOk, data: staffRows } = await supabaseGet(
     `tello_staff_members?id=eq.${encodeURIComponent(link.staff_id)}&user_id=eq.${link.user_id}&select=name`,

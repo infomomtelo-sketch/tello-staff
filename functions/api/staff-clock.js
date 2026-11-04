@@ -1,12 +1,16 @@
 // Cloudflare Pages Function — /api/staff-clock
-//   GET  ?token=...                      → clock state for the staff member
-//   POST { token, action }               → action: in | break_start | break_end | out
+//   POST { action: 'roster', key }               → names for the "tap your name" list
+//   POST { action: 'login', key, staffId | empNo, pin } → session token + clock state
+//   GET  (Authorization: Bearer <session>)    → clock state for the staff member
+//   POST { action } (Bearer <session>)        → consent | in | break_start | break_end | out
 //
-// Powers the Clock card on the public personal page (/my-shift.html). Same
-// security pattern as staff-share-data.js: the staff share-link token is the
-// access control, validated here on the server, and reads/writes use the
-// Supabase SERVICE ROLE key (staff have no login). Rows are stored under the
-// admin's user_id (the link's owner), and the admin reads them through RLS.
+// Powers the Tello Staff clock page (/clock/, also embedded as a widget on a
+// customer's own site via /embed.js). Staff sign in there with an employee
+// number + PIN the admin set up; the signed session token is the access control,
+// validated here on the server, and reads/writes use the Supabase SERVICE ROLE
+// key (staff have no Supabase login). Rows are stored under the admin's user_id
+// and the admin reads them through RLS. Staff can only clock in/out and read
+// their own hours and schedule — nothing else in the app.
 //
 // Times: every punch is stamped with the SERVER clock, never the phone's
 // clock, so a wrong or tampered device time can't change a timesheet. Shift
@@ -18,9 +22,9 @@
 // overage is only flagged for the admin to review; the app only REPORTS
 // break overage and never tells anyone to shorten a later break.
 //
-// Who is punching, and where (schema_clock_v2.sql). The link token only says
-// WHICH staff member's clock this is, so every clock-in and clock-out must also
-// carry (1) a live selfie and (2) the phone's location at that moment:
+// Who is punching, and where (schema_clock_v2.sql). The employee number + PIN
+// say WHICH staff member's clock this is, and every clock-in and clock-out must
+// also carry (1) a live selfie and (2) the phone's location at that moment:
 //   * consent — the person must have accepted the photo/location notice
 //     (CONSENT_VERSION) before their first punch; recorded in
 //     tello_staff_clock_consent.
@@ -257,6 +261,141 @@ async function purgeOldPhotos(ctx, now, serviceKey) {
   } catch { /* retention is best-effort; it retries on the next punch */ }
 }
 
+// ---- staff sign-in: employee number + PIN → short-lived signed session ----
+// Staff have no Supabase login. The clock page signs them in here and gets a
+// session token signed (HMAC-SHA256) with a key derived from the service role
+// key, so no extra Cloudflare setting is needed. The token only says "this
+// staff member, for this admin" and expires; it can do nothing but use the
+// clock and read that person's own schedule.
+const SESSION_HOURS = 16;
+const MAX_FAILED_PINS = 5;
+const LOCK_MINUTES = 15;
+const KEY_RE = /^[A-Za-z0-9_-]{16,64}$/;
+
+const enc = new TextEncoder();
+function b64url(buf) {
+  let s = '';
+  new Uint8Array(buf).forEach((b) => { s += String.fromCharCode(b); });
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64urlToBytes(str) {
+  const b = atob(str.replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(b, (c) => c.charCodeAt(0));
+}
+function hmacKey(serviceKey, usage) {
+  return crypto.subtle.importKey('raw', enc.encode(`tello-clock-session:${serviceKey}`), { name: 'HMAC', hash: 'SHA-256' }, false, [usage]);
+}
+async function signSession(payload, serviceKey) {
+  const body = b64url(enc.encode(JSON.stringify(payload)));
+  const sig = await crypto.subtle.sign('HMAC', await hmacKey(serviceKey, 'sign'), enc.encode(body));
+  return `${body}.${b64url(sig)}`;
+}
+async function readSession(token, serviceKey) {
+  try {
+    const [body, sig] = String(token || '').split('.');
+    if (!body || !sig) return null;
+    const ok = await crypto.subtle.verify('HMAC', await hmacKey(serviceKey, 'verify'), b64urlToBytes(sig), enc.encode(body));
+    if (!ok) return null;
+    const p = JSON.parse(new TextDecoder().decode(b64urlToBytes(body)));
+    if (!p || !p.u || !p.s || !(p.exp > Date.now())) return null;
+    return p;
+  } catch { return null; }
+}
+
+async function hashPin(pin, saltB64) {
+  const keyMat = await crypto.subtle.importKey('raw', enc.encode(String(pin)), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: b64urlToBytes(saltB64), iterations: 100000 }, keyMat, 256);
+  return b64url(bits);
+}
+function sameString(a, b) {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i += 1) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+
+function bearer(request) {
+  const h = request.headers.get('Authorization') || '';
+  return h.startsWith('Bearer ') ? h.slice(7).trim() : '';
+}
+
+async function handleLogin(body, env) {
+  const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = typeof body.key === 'string' ? body.key.trim() : '';
+  const empNo = typeof body.empNo === 'string' ? body.empNo.trim().slice(0, 20) : '';
+  const staffIdIn = typeof body.staffId === 'string' ? body.staffId.trim().slice(0, 64) : '';
+  const pin = typeof body.pin === 'string' ? body.pin.trim() : '';
+  const BAD = json({ error: 'That PIN is not right.' }, 401);
+  if (!KEY_RE.test(key)) return json({ error: 'This clock link is missing its company key. Ask your admin for the Tello Staff clock link.' }, 400);
+  if ((!empNo && !staffIdIn) || !/^\d{4}$/.test(pin)) return BAD;
+
+  const { ok: cfgOk, data: cfg } = await sbGet(`tello_staff_config?clock_key=eq.${key}&select=user_id`, serviceKey);
+  if (!cfgOk) return json({ error: 'The time clock is not set up yet. The admin needs to run schema_clock_v3.sql in Supabase.' }, 500);
+  const userId = Array.isArray(cfg) && cfg[0] ? cfg[0].user_id : null;
+  let cred = null;
+  if (userId && staffIdIn) {
+    // Picked from the name list.
+    const { data } = await sbGet(`tello_staff_clock_credentials?user_id=eq.${userId}&staff_id=eq.${encodeURIComponent(staffIdIn)}&select=*`, serviceKey);
+    cred = Array.isArray(data) && data[0] ? data[0] : null;
+  } else if (userId) {
+    const { data } = await sbGet(`tello_staff_clock_credentials?user_id=eq.${userId}&emp_no=ilike.${encodeURIComponent(empNo.replace(/[%*_,()]/g, ''))}&select=*`, serviceKey);
+    cred = Array.isArray(data) ? data.find((r) => r.emp_no.toLowerCase() === empNo.toLowerCase()) || null : null;
+  }
+  const now = new Date();
+  if (cred && cred.locked_until && new Date(cred.locked_until) > now) {
+    const mins = Math.ceil((new Date(cred.locked_until) - now) / 60000);
+    return json({ error: `Too many wrong tries. Try again in ${mins} minute${mins === 1 ? '' : 's'}, or ask your admin to reset your PIN.` }, 429);
+  }
+  // Same work whether or not the employee number exists, so timing doesn't reveal it.
+  const salt = cred && cred.pin_salt ? cred.pin_salt : b64url(new Uint8Array(16));
+  const hash = await hashPin(pin, salt);
+  const good = !!(cred && cred.pin_hash && sameString(hash, cred.pin_hash));
+  if (!good) {
+    if (cred) {
+      const failed = (cred.failed_count || 0) + 1;
+      const patch = failed >= MAX_FAILED_PINS
+        ? { failed_count: 0, locked_until: new Date(now.getTime() + LOCK_MINUTES * 60000).toISOString() }
+        : { failed_count: failed };
+      await fetch(`${SUPABASE_URL}/rest/v1/tello_staff_clock_credentials?user_id=eq.${userId}&staff_id=eq.${encodeURIComponent(cred.staff_id)}`, {
+        method: 'PATCH',
+        headers: sbHeaders(serviceKey, { 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
+        body: JSON.stringify(patch),
+      });
+    }
+    return BAD;
+  }
+  if (cred.failed_count || cred.locked_until) {
+    await fetch(`${SUPABASE_URL}/rest/v1/tello_staff_clock_credentials?user_id=eq.${userId}&staff_id=eq.${encodeURIComponent(cred.staff_id)}`, {
+      method: 'PATCH',
+      headers: sbHeaders(serviceKey, { 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
+      body: JSON.stringify({ failed_count: 0, locked_until: null }),
+    });
+  }
+  const session = await signSession({ u: userId, s: cred.staff_id, exp: now.getTime() + SESSION_HOURS * 3600000 }, serviceKey);
+  const ctx = await loadContext(session, serviceKey);
+  if (ctx.error) return ctx.error;
+  return stateResponse(ctx, now, serviceKey, { session, notice: 'signed_in' });
+}
+
+// Names for the "tap your name" list: only people the admin has given a PIN.
+// Anyone who has this company's clock link can see these names, like the list
+// on a wall tablet — the PIN (5 wrong tries = locked 15 minutes) protects the
+// clock itself.
+async function handleRoster(body, env) {
+  const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = typeof body.key === 'string' ? body.key.trim() : '';
+  if (!KEY_RE.test(key)) return json({ error: 'This clock link is missing its company key. Ask your admin for the Tello Staff clock link.' }, 400);
+  const { ok, data: cfg } = await sbGet(`tello_staff_config?clock_key=eq.${key}&select=user_id`, serviceKey);
+  if (!ok) return json({ error: 'The time clock is not set up yet. The admin needs to run schema_clock_v3.sql in Supabase.' }, 500);
+  const userId = Array.isArray(cfg) && cfg[0] ? cfg[0].user_id : null;
+  if (!userId) return json({ error: 'This clock link is not valid. Ask your admin for the Tello Staff clock link.' }, 404);
+  const { data: creds } = await sbGet(`tello_staff_clock_credentials?user_id=eq.${userId}&pin_hash=not.is.null&select=staff_id`, serviceKey);
+  const allowed = new Set((Array.isArray(creds) ? creds : []).map((c) => c.staff_id));
+  const { data: members } = await sbGet(`tello_staff_members?user_id=eq.${userId}&select=id,name&order=name`, serviceKey);
+  const staff = (Array.isArray(members) ? members : []).filter((m) => allowed.has(m.id)).map((m) => ({ id: m.id, name: m.name }));
+  return json({ staff });
+}
+
 function publicEntry(e) {
   const c = { ...e };
   PRIVATE_ENTRY_FIELDS.forEach((f) => { delete c[f]; });
@@ -277,20 +416,17 @@ function cleanSettings(raw) {
 }
 
 // Everything the endpoint needs about who this link belongs to.
-async function loadContext(token, serviceKey) {
-  const { ok: linkOk, status: linkStatus, data: links } = await sbGet(
-    `tello_staff_share_links?token=eq.${encodeURIComponent(token)}&revoked_at=is.null&select=*`, serviceKey);
-  if (!linkOk) {
-    return { error: json({ error: `The server could not check this link (database answered ${linkStatus}). The SUPABASE_SERVICE_ROLE_KEY setting in Cloudflare is probably missing or from a different Supabase project.` }, 500) };
-  }
-  if (!Array.isArray(links) || !links.length || !links[0].staff_id) {
-    return { error: json({ error: 'This link is invalid or has been revoked.' }, 404) };
-  }
-  const link = links[0];
-  const { data: staffRows } = await sbGet(
+async function loadContext(sessionToken, serviceKey) {
+  const sess = await readSession(sessionToken, serviceKey);
+  if (!sess) return { error: json({ error: 'Please sign in again.', code: 'signin_required' }, 401) };
+  const link = { user_id: sess.u, staff_id: sess.s };
+  const { ok: staffOk, data: staffRows } = await sbGet(
     `tello_staff_members?id=eq.${encodeURIComponent(link.staff_id)}&user_id=eq.${link.user_id}&select=name`, serviceKey);
+  if (!staffOk) {
+    return { error: json({ error: `The server could not read the staff list (database answered). The SUPABASE_SERVICE_ROLE_KEY setting in Cloudflare is probably missing or from a different Supabase project.` }, 500) };
+  }
   if (!Array.isArray(staffRows) || !staffRows.length) {
-    return { error: json({ error: 'This staff member no longer exists.' }, 404) };
+    return { error: json({ error: 'Please sign in again.', code: 'signin_required' }, 401) };
   }
   const { data: cfgRows } = await sbGet(`tello_staff_config?user_id=eq.${link.user_id}&select=homes,clock_settings`, serviceKey);
   const cfg = Array.isArray(cfgRows) && cfgRows[0] ? cfgRows[0] : { homes: [], clock_settings: null };
@@ -384,8 +520,8 @@ async function stateResponse(ctx, now, serviceKey, extra = {}) {
 }
 
 async function handleGet({ request, env }) {
-  const token = (new URL(request.url).searchParams.get('token') || '').trim();
-  if (!token) return json({ error: 'Missing token' }, 400);
+  const token = bearer(request);
+  if (!token) return json({ error: 'Please sign in.', code: 'signin_required' }, 401);
   const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!serviceKey) return json({ error: 'SUPABASE_SERVICE_ROLE_KEY is not configured on the server' }, 500);
   const ctx = await loadContext(token, serviceKey);
@@ -406,12 +542,14 @@ async function handlePost(context) {
   const { request, env } = context;
   let body;
   try { body = await request.json(); } catch { return json({ error: 'Invalid JSON body' }, 400); }
-  const token = typeof body?.token === 'string' ? body.token.trim() : '';
   const action = body?.action;
-  if (!token) return json({ error: 'Missing token' }, 400);
-  if (!['consent', 'in', 'break_start', 'break_end', 'out'].includes(action)) return json({ error: 'Unknown action' }, 400);
+  if (!['login', 'roster', 'consent', 'in', 'break_start', 'break_end', 'out'].includes(action)) return json({ error: 'Unknown action' }, 400);
   const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!serviceKey) return json({ error: 'SUPABASE_SERVICE_ROLE_KEY is not configured on the server' }, 500);
+  if (action === 'login') return handleLogin(body, env);
+  if (action === 'roster') return handleRoster(body, env);
+  const token = bearer(request);
+  if (!token) return json({ error: 'Please sign in.', code: 'signin_required' }, 401);
 
   const ctx = await loadContext(token, serviceKey);
   if (ctx.error) return ctx.error;

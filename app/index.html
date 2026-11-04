@@ -754,6 +754,7 @@
   .break-rule label.paid { display: flex; align-items: center; gap: 4px; font-size: 13px; }
   .time-print-title { display: none; }
   .time-select { background: var(--bg-input); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 14px; width: 100%; }
+  .code-box { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; word-break: break-all; margin-bottom: 6px; }
   .geo-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
   .geo-row:last-child { border-bottom: none; }
   .geo-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
@@ -910,6 +911,10 @@ const state = {
   chatMessages: [],
   chatSending: false,
   staff: [],
+  clockKey: null,
+  clockOrigins: [],
+  clockCreds: {},
+  clockMsg: '',
   clockSettings: null,
   timeFrom: null,
   timeTo: null,
@@ -1137,6 +1142,8 @@ async function loadConfig(userId) {
   const { data, error } = await sb.from('tello_staff_config').select('*').eq('user_id', userId).maybeSingle();
   if (error) { console.error(error); showErrorBanner(`Couldn't load your homes and reliever setup — ${error.message}`); }
   state.clockSettings = mergeClockSettings(data && data.clock_settings);
+  state.clockKey = (data && data.clock_key) || null;
+  state.clockOrigins = Array.isArray(data && data.clock_allowed_origins) ? data.clock_allowed_origins : [];
   if (data) {
     state.config = {
       homes: (data.homes && data.homes.length) ? data.homes : defaultConfig().homes,
@@ -2694,6 +2701,7 @@ async function saveEntryAdjustment(id, inVal, outVal, note) {
   await refreshOpenEntries();
   await loadTimeRange();
   renderTime();
+  if (state.clockKey) { await loadClockCreds(); renderTime(); }
 }
 
 function csvCell(v) {
@@ -2781,6 +2789,76 @@ function setHomeGeoHere(id) {
   }, () => alert("Couldn't get your location. Allow location for this page, or paste the home's coordinates instead."),
   { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
 }
+// ---------------------------------------------------------------------------
+// Time clock app: clock key, allowed websites, staff employee numbers + PINs
+// ---------------------------------------------------------------------------
+function clockUrl(kiosk) { return `${location.origin}/clock/?k=${state.clockKey}${kiosk ? '&kiosk=1' : ''}`; }
+function clockEmbedSnippet() { return '<scr' + `ipt src="${location.origin}/embed.js" data-key="${state.clockKey}" async><` + '/scr' + 'ipt>'; }
+function normalizeOrigin(v) {
+  let t = String(v || '').trim();
+  if (!t) return null;
+  if (!/^https?:\/\//i.test(t)) t = 'https://' + t;
+  try {
+    const u = new URL(t);
+    if (u.protocol !== 'https:' && !(u.hostname === 'localhost')) return null;
+    return u.origin;
+  } catch (e) { return null; }
+}
+async function saveClockApp() {
+  const { error } = await sb.from('tello_staff_config').update({ clock_key: state.clockKey, clock_allowed_origins: state.clockOrigins }).eq('user_id', state.user.id);
+  if (error) { showErrorBanner(`Couldn't save the time clock setup — ${error.message}. Did you run schema_clock_v3.sql?`); return false; }
+  return true;
+}
+async function loadClockCreds() {
+  const { data, error } = await sb.from('tello_staff_clock_credentials').select('staff_id,emp_no,pin_set,failed_count,locked_until').eq('user_id', state.user.id);
+  if (error) { state.clockMsg = 'Could not load staff sign-ins (run schema_clock_v3.sql).'; return; }
+  state.clockCreds = {};
+  (data || []).forEach((r) => { state.clockCreds[r.staff_id] = r; });
+}
+async function clockAdminCall(body) {
+  const { data: sess } = await sb.auth.getSession();
+  const token = sess && sess.session && sess.session.access_token;
+  const res = await fetch('/api/clock-admin', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+  let out = {};
+  try { out = await res.json(); } catch (e) { /* ignore */ }
+  if (!res.ok) throw new Error(out.error || `Request failed (${res.status})`);
+  return out;
+}
+function clockAppHtml() {
+  if (!state.clockKey) {
+    return `<h4 class="sub">Time clock app</h4>
+      <p class="time-sub" style="margin-bottom:8px">Staff clock in and out on their own page (or on a button added to your website) with their name or employee number + a 4-digit PIN. They can only clock in/out and see their own schedule and hours.</p>
+      <button class="btn-primary small" data-action="clock-app-on">Turn on the time clock app</button>`;
+  }
+  const origins = state.clockOrigins.map((o, i) => `<div class="time-sub" style="display:flex;gap:8px;align-items:center"><code>${esc(o)}</code><button class="btn-outline small" data-action="clock-origin-remove" data-i="${i}">Remove</button></div>`).join('') || '<div class="time-sub">None yet — the button can only be added to the websites you list here.</div>';
+  const rows = state.staff.map((s) => {
+    const c = state.clockCreds[s.id];
+    const locked = c && c.locked_until && new Date(c.locked_until) > new Date();
+    return `<div class="geo-row"><div class="time-name">${esc(s.name)}</div>
+      <div class="time-sub">${c ? `Employee # ${esc(c.emp_no)} · PIN ${c.pin_set ? 'set' : 'not set'}${locked ? ' · LOCKED (too many wrong PINs)' : ''}` : 'Not set up for the time clock'}</div>
+      <div class="geo-controls">
+        <button class="btn-outline small" data-action="clock-pin-set" data-id="${s.id}">${c && c.pin_set ? 'Reset PIN' : 'Set PIN'}</button>
+        ${c ? `<button class="btn-outline small" data-action="clock-emp-set" data-id="${s.id}">Change number</button><button class="btn-outline small" data-action="clock-pin-clear" data-id="${s.id}">Remove</button>` : ''}
+      </div></div>`;
+  }).join('') || '<div class="time-sub">Add staff first.</div>';
+  return `<h4 class="sub">Time clock app</h4>
+    ${state.clockMsg ? `<div class="time-sub" style="margin-bottom:8px"><b>${esc(state.clockMsg)}</b></div>` : ''}
+    <p class="time-sub" style="margin-bottom:6px">Staff page (put on a tablet or phone):</p>
+    <div class="code-box">${esc(clockUrl(false))}</div>
+    <div class="geo-controls"><button class="btn-outline small" data-action="clock-copy" data-what="url">Copy link</button>
+      <button class="btn-outline small" data-action="clock-copy" data-what="kiosk">Copy tablet link (signs out after each punch)</button></div>
+    <p class="time-sub" style="margin:10px 0 6px">Add to your website — paste this one line before &lt;/body&gt;:</p>
+    <div class="code-box">${esc(clockEmbedSnippet())}</div>
+    <div class="geo-controls"><button class="btn-outline small" data-action="clock-copy" data-what="embed">Copy website code</button></div>
+    <p class="time-sub" style="margin:10px 0 6px"><b>Allowed websites</b> (the button only works on these)</p>
+    ${origins}
+    <div class="geo-controls"><input type="text" id="clockOriginInput" placeholder="https://title-22.com" /><button class="btn-outline small" data-action="clock-origin-add">Add</button></div>
+    <p class="time-sub" style="margin:12px 0 6px"><b>Staff sign-in</b> — employee number + 4-digit PIN. Give the PIN to the person privately; it is shown only once and cannot be looked up later.</p>
+    ${rows}
+    <div class="geo-controls" style="margin-top:10px"><button class="btn-outline small" data-action="clock-key-regen">New clock key (old links stop working)</button>
+      <button class="btn-outline small" data-action="clock-app-off">Turn off</button></div>`;
+}
+
 function homeLocationsHtml() {
   return state.config.homes.map((h) => {
     const g = homeGeo(h);
@@ -2929,6 +3007,7 @@ function renderTime() {
       <button class="btn-outline small" data-action="break-add">+ Add a break</button>
       <h4 class="sub">Time zone</h4>
       <select class="time-select" data-kind="clock-tz">${TZ_OPTIONS.map(([v, l]) => `<option value="${v}" ${cs.timezone === v ? 'selected' : ''}>${esc(l)}</option>`).concat(TZ_OPTIONS.some(([v]) => v === cs.timezone) ? [] : [`<option value="${esc(cs.timezone)}" selected>${esc(cs.timezone)}</option>`]).join('')}</select>
+      ${clockAppHtml()}
       <h4 class="sub">Home locations</h4>
       <p class="time-sub" style="margin-bottom:6px">Staff can clock in or out only within the allowed distance of their home. Stand at the home and tap "Use my current location", or paste the coordinates (in Google Maps, press and hold the home, then tap the numbers). The location is read from a staff member's phone only at the moment they tap Clock In or Clock Out. If someone is blocked but really worked, fix their hours with Edit in Timesheets.</p>
       ${homeLocationsHtml()}
@@ -3023,6 +3102,69 @@ function onGlobalClick(e) {
         delete home.geo;
         saveConfig();
         renderTime();
+      }
+      break;
+    }
+    case 'clock-app-on': {
+      const b = new Uint8Array(18); crypto.getRandomValues(b);
+      state.clockKey = btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_');
+      saveClockApp().then((ok) => { if (!ok) state.clockKey = null; renderTime(); if (ok) loadClockCreds().then(renderTime); });
+      break;
+    }
+    case 'clock-app-off':
+      if (confirm('Turn off the time clock app? The staff page and website button will stop working. PINs are kept.')) {
+        const old = state.clockKey; state.clockKey = null;
+        saveClockApp().then((ok) => { if (!ok) state.clockKey = old; renderTime(); });
+      }
+      break;
+    case 'clock-key-regen':
+      if (confirm('Make a new clock key? The old staff link and website code stop working until you replace them.')) {
+        const old = state.clockKey; const b = new Uint8Array(18); crypto.getRandomValues(b);
+        state.clockKey = btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_');
+        saveClockApp().then((ok) => { if (!ok) state.clockKey = old; renderTime(); });
+      }
+      break;
+    case 'clock-copy': {
+      const text = btn.dataset.what === 'embed' ? clockEmbedSnippet() : clockUrl(btn.dataset.what === 'kiosk');
+      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => { state.clockMsg = 'Copied.'; renderTime(); }, () => prompt('Copy this:', text));
+      break;
+    }
+    case 'clock-origin-add': {
+      const o = normalizeOrigin(document.getElementById('clockOriginInput').value);
+      if (!o) { alert('Enter a website like https://title-22.com (must be https).'); break; }
+      if (!state.clockOrigins.includes(o)) state.clockOrigins.push(o);
+      saveClockApp().then(renderTime);
+      break;
+    }
+    case 'clock-origin-remove':
+      state.clockOrigins.splice(Number(btn.dataset.i), 1);
+      saveClockApp().then(renderTime);
+      break;
+    case 'clock-pin-set': {
+      const s = state.staff.find((x) => x.id === btn.dataset.id);
+      const typed = prompt(`New 4-digit PIN for ${s.name}? Leave empty and press OK to make a random one.`, '');
+      if (typed === null) break;
+      if (typed && !/^\d{4}$/.test(typed.trim())) { alert('A PIN is exactly 4 digits.'); break; }
+      clockAdminCall({ action: 'set_pin', staffId: s.id, pin: typed.trim() || undefined }).then(async (out) => {
+        await loadClockCreds();
+        state.clockMsg = out.pin ? `${s.name}'s PIN is ${out.pin} — write it down now, it will not be shown again.` : `PIN saved for ${s.name}.`;
+        renderTime();
+        if (out.pin) alert(`${s.name}'s new PIN: ${out.pin}\n\nGive it to them privately. It will not be shown again.`);
+      }).catch((e) => alert(e.message));
+      break;
+    }
+    case 'clock-emp-set': {
+      const s = state.staff.find((x) => x.id === btn.dataset.id);
+      const cur = state.clockCreds[s.id] ? state.clockCreds[s.id].emp_no : '';
+      const v = prompt(`Employee number for ${s.name}:`, cur);
+      if (!v || !v.trim()) break;
+      clockAdminCall({ action: 'set_emp', staffId: s.id, empNo: v.trim() }).then(async () => { await loadClockCreds(); renderTime(); }).catch((e) => alert(e.message));
+      break;
+    }
+    case 'clock-pin-clear': {
+      const s = state.staff.find((x) => x.id === btn.dataset.id);
+      if (confirm(`Remove ${s.name} from the time clock? They will not be able to sign in.`)) {
+        clockAdminCall({ action: 'clear_pin', staffId: s.id }).then(async () => { await loadClockCreds(); renderTime(); }).catch((e) => alert(e.message));
       }
       break;
     }

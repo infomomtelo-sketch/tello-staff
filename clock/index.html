@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#1a3a2e" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Time clock — Tello Staff</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Crect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27%231a3a2e%27/%3E%3Ctext x=%2750%27 y=%2770%27 font-size=%2760%27 font-family=%27Arial,sans-serif%27 font-weight=%27bold%27 fill=%27%23e8c15c%27 text-anchor=%27middle%27%3ET%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/marketing.css" />
+<style>
+  body.embed .site-header, body.embed .shift-note { display: none; }
+  body.embed .shift-main { padding: 14px 14px 32px; }
+  .login-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-muted); font-weight: 600; }
+  .login-label input { padding: 14px; font-size: 20px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-family: inherit; letter-spacing: 2px; }
+  .shift-main { max-width: 560px; margin: 0 auto; padding: 32px 20px 64px; }
+  .shift-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+  .shift-greeting { font-size: 22px; margin-bottom: 20px; }
+  .month-bar { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 20px; }
+  .month-nav {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    font-size: 18px;
+    cursor: pointer;
+  }
+  .month-nav:hover { border-color: var(--accent); }
+  .month-label { font-weight: 700; font-size: 16px; min-width: 160px; text-align: center; }
+  .today-card {
+    background: linear-gradient(135deg, var(--bg-card), var(--bg-elevated));
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 24px;
+    text-align: center;
+  }
+  .today-card .today-label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 8px; }
+  .today-card .today-status { font-size: 19px; font-weight: 800; }
+  .today-card.is-off .today-status { color: var(--text); }
+  .today-card.is-none .today-status { color: var(--text-muted); }
+  .day-time { color: var(--accent); }
+  .day-list { display: flex; flex-direction: column; gap: 6px; }
+  .day-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+  .day-row.is-today { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .day-row .day-name { font-weight: 700; min-width: 70px; }
+  .day-row .day-detail { color: var(--text-muted); text-align: right; }
+  .day-row .day-detail.working { color: var(--text); font-weight: 600; }
+
+  /* ---- Clock card ---- */
+  .clock-card {
+    background: linear-gradient(135deg, var(--bg-card), var(--bg-elevated));
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 24px;
+    text-align: center;
+  }
+  .clock-card .clock-label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 6px; }
+  .clock-card .clock-status { font-size: 19px; font-weight: 800; }
+  .clock-card .clock-sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; }
+  .clock-timer { font-size: 40px; font-weight: 800; letter-spacing: 1px; margin: 10px 0 2px; font-variant-numeric: tabular-nums; color: var(--accent); }
+  .clock-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+  .clock-btn {
+    min-height: 52px; border-radius: 12px; border: 1px solid var(--border);
+    background: var(--bg-card); color: var(--text); font: inherit; font-size: 16px; font-weight: 700; cursor: pointer;
+  }
+  .clock-btn.primary { background: var(--accent); border-color: var(--accent); color: #1a3a2e; font-size: 18px; min-height: 60px; }
+  .clock-btn.danger { border-color: #c0605a; color: #e88a84; }
+  .clock-btn:disabled { opacity: .55; cursor: default; }
+  .tello-say {
+    margin-top: 14px; padding: 10px 12px; border-radius: 10px; text-align: left; font-size: 14px;
+    background: rgba(232, 193, 92, .12); border: 1px solid rgba(232, 193, 92, .45);
+  }
+  .tello-say b { color: var(--accent); }
+  .voice-btn { margin-top: 12px; background: none; border: 1px dashed var(--border); color: var(--text-muted); border-radius: 10px; padding: 8px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  .clock-err { color: #e88a84; font-size: 13px; margin-top: 10px; }
+  .consent-box { text-align: left; background: rgba(232, 193, 92, .08); border: 1px solid rgba(232, 193, 92, .45); border-radius: 12px; padding: 14px; margin-top: 16px; font-size: 14px; }
+  .consent-box ul { margin: 8px 0 4px 18px; padding: 0; }
+  .consent-box li { margin-bottom: 6px; }
+  .consent-box label { display: flex; gap: 10px; align-items: flex-start; margin: 12px 0; font-weight: 700; }
+  .consent-box input[type=checkbox] { width: 22px; height: 22px; flex: none; margin: 0; }
+  .consent-box a { color: var(--accent); }
+  .cam-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .94); z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; gap: 14px; }
+  .cam-overlay video { width: 100%; max-width: 420px; border-radius: 16px; background: #000; transform: scaleX(-1); }
+  .cam-overlay .cam-msg { color: #fff; font-size: 14px; text-align: center; max-width: 420px; }
+  .cam-overlay .cam-actions { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 420px; }
+  .hours-card { margin-top: 28px; text-align: left; }
+  .hours-card h2 { font-size: 16px; margin: 0 0 10px; }
+  .hours-week { display: flex; justify-content: space-between; font-weight: 700; font-size: 13px; margin: 14px 0 6px; color: var(--accent); }
+  .hours-row { display: flex; justify-content: space-between; gap: 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; font-size: 13px; margin-bottom: 6px; }
+  .hours-row .h-sub { color: var(--text-muted); font-size: 12px; }
+  .hours-row .h-flag { color: #e8c15c; font-size: 12px; }
+  .hours-note { font-size: 12px; color: var(--text-muted); margin-top: 10px; }
+  .shift-note { font-size: 12px; color: var(--text-muted); margin-top: 24px; text-align: center; }
+  .clock-info { background: rgba(80,160,120,.15); border: 1px solid rgba(80,160,120,.4); color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-top: 12px; }
+  .pick-search { width: 100%; box-sizing: border-box; margin-top: 14px; padding: 14px; font-size: 17px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-family: inherit; }
+  .pick-list { margin-top: 10px; max-height: 52vh; overflow-y: auto; text-align: left; border-radius: 12px; }
+  .pick-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px; font-size: 17px; background: transparent; border: 0; border-bottom: 1px solid var(--border); color: var(--text); font-family: inherit; cursor: pointer; text-align: left; }
+  .pick-av { width: 38px; height: 38px; border-radius: 50%; background: var(--border); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex: none; }
+  .link-btn { background: none; border: 0; color: var(--text-muted); text-decoration: underline; font-size: 14px; margin-top: 14px; cursor: pointer; font-family: inherit; }
+  .pin-dots { display: flex; justify-content: center; gap: 16px; margin: 18px 0 6px; }
+  .pin-dots i { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--text-muted); display: block; }
+  .pin-dots i.on { background: var(--text); border-color: var(--text); }
+  .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; max-width: 300px; margin: 14px auto 0; }
+  .key { height: 64px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 26px; font-family: inherit; cursor: pointer; }
+  .key.small { font-size: 14px; border: 0; background: transparent; }
+  .key:active { background: var(--border); }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a href="/" class="logo">Tello <span>Staff</span></a>
+  </div>
+</header>
+
+<main class="shift-main">
+  <div id="content" class="shift-state">Loading your schedule…</div>
+</main>
+
+<script>
+function esc(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function fmtDateLabel(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// Read a reply as JSON; if the server sent something else (an error page, say), say so plainly
+// instead of letting the browser's cryptic parse error ("string did not match the expected pattern") through.
+async function readJson(res) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error(`The server sent an unexpected reply (HTTP ${res.status}). Please try again in a moment; if it keeps happening, tell the admin.`);
+  }
+}
+
+function renderError(message) {
+  document.getElementById('content').innerHTML = `
+    <div class="shift-state">
+      <h2>Can't load this schedule</h2>
+      <p>${esc(message)}</p>
+    </div>`;
+}
+
+function shiftsLabel(shifts) {
+  return shifts.map((s) => {
+    const time = s.start && s.end ? ` <span class="day-time">${esc(s.start)}–${esc(s.end)}</span>` : '';
+    return `${esc(s.homeName)}${time}`;
+  }).join(', ');
+}
+
+function renderSchedule(data, token) {
+  const todayEntry = data.days.find((d) => d.date === data.today);
+  let todayHtml = '';
+  if (todayEntry) {
+    let statusHtml;
+    let cls = '';
+    if (todayEntry.status === 'working') {
+      statusHtml = `Working at ${shiftsLabel(todayEntry.shifts)}`;
+    } else if (todayEntry.status === 'dayOff') {
+      statusHtml = "You're off today";
+      cls = 'is-off';
+    } else {
+      statusHtml = 'Not on the schedule yet';
+      cls = 'is-none';
+    }
+    todayHtml = `
+      <div class="today-card ${cls}">
+        <div class="today-label">Today · ${fmtDateLabel(todayEntry.date)}</div>
+        <div class="today-status">${statusHtml}</div>
+      </div>`;
+  }
+
+  const daysHtml = data.days.map((d) => {
+    let detail;
+    let cls = '';
+    if (d.status === 'working') { detail = shiftsLabel(d.shifts); cls = 'working'; }
+    else if (d.status === 'dayOff') detail = 'Day off';
+    else detail = '—';
+    const isToday = d.date === data.today;
+    return `
+      <div class="day-row ${isToday ? 'is-today' : ''}">
+        <div class="day-name">${esc(d.weekday)} ${d.dayOfMonth}</div>
+        <div class="day-detail ${cls}">${detail}</div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('content').innerHTML = `
+    <h1 class="shift-greeting">Hi ${esc(data.staffName)}</h1>
+
+    <div id="clockCard"></div>
+
+    <div class="month-bar">
+      <button type="button" class="month-nav" data-month="${esc(data.prevMonth)}" aria-label="Previous month">‹</button>
+      <div class="month-label">${esc(data.monthLabel)}</div>
+      <button type="button" class="month-nav" data-month="${esc(data.nextMonth)}" aria-label="Next month">›</button>
+    </div>
+
+    ${todayHtml}
+
+    <div class="day-list">${daysHtml}</div>
+
+    <div id="hoursCard"></div>
+
+    <p class="shift-note">This is pulled from wherever your name shows up on the schedule — if
+      something looks wrong, check with the admin.</p>
+    <div style="text-align:center"><button type="button" class="voice-btn" id="signOutBtn">Sign out</button></div>
+  `;
+  document.getElementById('signOutBtn').addEventListener('click', () => {
+    if (clock.data && clock.data.open && !confirm('You are still clocked in. Sign out of this screen anyway? (You stay clocked in.)')) return;
+    signOut('You are signed out.');
+  });
+
+  document.querySelectorAll('.month-nav').forEach((btn) => {
+    btn.addEventListener('click', () => loadAndRender(token, btn.dataset.month));
+  });
+  renderClock();
+}
+
+async function loadAndRender(token, month) {
+  try {
+    const params = new URLSearchParams();
+    if (month) params.set('month', month);
+    const res = await fetch(`/api/staff-share-data?${params.toString()}`, { headers: authHeaders() });
+    const data = await readJson(res);
+    if (res.status === 401) { signOut('Your session ended. Please sign in again.'); return; }
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    renderSchedule(data, token);
+    maybeAutoPunch();
+  } catch (err) {
+    renderError(err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Time clock + Tello voice
+// ---------------------------------------------------------------------------
+// Punches go to /api/staff-clock, which stamps them with the SERVER clock.
+// The phone's clock is only used to tick the on-screen timer and to time
+// Tello's reminders (shifted by the server offset so they match). Tello speaks
+// through the browser's built-in voice, which only works while this page is
+// open and after one tap — when the phone is asleep the reminder shows up
+// here as soon as the page is opened again.
+const clock = { data: null, offset: 0, busy: false, err: '', say: '', voiceReady: false, tick: false };
+const spoken = new Set();
+
+function nowMs() { return Date.now() + clock.offset; }
+
+function fmtTime(iso) {
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: clock.data ? clock.data.timezone : undefined });
+}
+function fmtDur(min) {
+  min = Math.max(0, Math.round(min));
+  const h = Math.floor(min / 60), m = min % 60;
+  const hp = h ? `${h} hour${h === 1 ? '' : 's'}` : '';
+  const mp = `${m} minute${m === 1 ? '' : 's'}`;
+  return h ? (m ? `${hp} ${mp}` : hp) : mp;
+}
+// "1 hr 30 min", "10 min", "2 hr" — compact form for buttons and labels.
+// As a describing word: "10 minute", "1 hour 30 minute" (for "a 10 minute rest break").
+function fmtAdj(min) {
+  min = Math.max(0, Math.round(min));
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? (m ? `${h} hour ${m} minute` : `${h} hour`) : `${m} minute`;
+}
+function fmtShort(min) {
+  min = Math.max(0, Math.round(min));
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? (m ? `${h} hr ${m} min` : `${h} hr`) : `${m} min`;
+}
+function fmtHM(min) {
+  min = Math.max(0, Math.round(min));
+  return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`;
+}
+function fmtClockSecs(ms) {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// Unpaid breaks come off at their ACTUAL length. Paid-break overage is only
+// flagged (paidOver) — whether to deduct it is the employer's call.
+function entryStats(e, atMs) {
+  const inAt = new Date(e.clock_in).getTime();
+  const outAt = e.clock_out ? new Date(e.clock_out).getTime() : atMs;
+  const span = Math.max(0, (outAt - inAt) / 60000);
+  let unpaid = 0, over = 0, paidOver = 0;
+  (e.breaks || []).forEach((b) => {
+    const s = new Date(b.start).getTime();
+    const en = b.end ? new Date(b.end).getTime() : atMs;
+    const actual = Math.max(0, (en - s) / 60000);
+    if (!b.paid) unpaid += actual;
+    const o = Math.round(actual - (b.allowed || 0));
+    if (o >= 1) { over += o; if (b.paid) paidOver += o; }
+  });
+  return { span, unpaid, over, paidOver, worked: Math.max(0, span - unpaid) };
+}
+function openBreakOf(e) {
+  const b = e && (e.breaks || [])[(e.breaks || []).length - 1];
+  return b && !b.end ? b : null;
+}
+
+function unlockVoice() {
+  if (clock.voiceReady) return;
+  clock.voiceReady = true;
+  try { if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch (e) { /* ignore */ }
+  renderClock();
+}
+function telloSay(text, speak = true) {
+  clock.say = text;
+  const el = document.getElementById('telloSay');
+  if (el) el.innerHTML = `<b>Tello:</b> ${esc(text)}`;
+  else renderClock();
+  if (!speak || !clock.voiceReady) return;
+  try {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-US';
+    u.rate = 0.95;
+    window.speechSynthesis.speak(u);
+  } catch (e) { /* ignore */ }
+}
+// Say each reminder once — also across page reloads on the same device.
+function sayOnce(key, text) {
+  if (spoken.has(key)) return;
+  try { if (localStorage.getItem('tello-said:' + key)) { spoken.add(key); return; } } catch (e) { /* ignore */ }
+  spoken.add(key);
+  try { localStorage.setItem('tello-said:' + key, '1'); } catch (e) { /* ignore */ }
+  telloSay(text);
+}
+
+function breaksSpoken() {
+  const b = (clock.data && clock.data.breaks) || [];
+  if (!b.length) return '';
+  const parts = b.map((x) => `a ${fmtAdj(x.minutes)} ${x.label.toLowerCase()}${x.paid ? '' : ' (unpaid)'}`);
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+  return `Remember your breaks today: ${list}.`;
+}
+function localHour() {
+  return Number(new Intl.DateTimeFormat('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: clock.data.timezone }).format(new Date(nowMs())));
+}
+
+function voiceCheck() {
+  const d = clock.data;
+  if (!d) return;
+  const now = nowMs();
+  const first = (d.staffName || '').split(' ')[0];
+  const e = d.open;
+  if (e) {
+    const ob = openBreakOf(e);
+    if (ob && ob.allowed > 0 && (now - new Date(ob.start).getTime()) / 60000 >= ob.allowed) {
+      sayOnce(`bu:${e.id}:${e.breaks.length}`, `Your ${fmtAdj(ob.allowed)} ${ob.label.toLowerCase()} is up. Please tap End break when you are back.`);
+    }
+    const endIso = e.sched_end;
+    if (endIso) {
+      const endAt = new Date(endIso).getTime();
+      if (now >= endAt - 5 * 60000 && now < endAt + 30 * 60000) {
+        const st = entryStats(e, now);
+        sayOnce(`out:${e.id}`, `${first ? first + ', your' : 'Your'} shift ends at ${fmtTime(endIso)}. So far you have worked ${fmtDur(st.worked)}. Thank you for today, take care, and please remember to clock out.`);
+      }
+    }
+  } else {
+    (d.shifts || []).forEach((s) => {
+      const startAt = new Date(s.start).getTime();
+      if (now >= startAt - 5 * 60000 && now < startAt + 15 * 60000) {
+        const h = localHour();
+        const g = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+        sayOnce(`in:${s.start}`, `${g}${first ? ', ' + first : ''}. Your shift at ${s.homeName} starts at ${fmtTime(s.start)}. ${breaksSpoken()} Please clock in when you arrive.`);
+      }
+    });
+  }
+}
+
+function tick() {
+  if (!clock.data) return;
+  const t = document.getElementById('clockTimer');
+  if (t && clock.data.open) t.textContent = fmtClockSecs(entryStats(clock.data.open, nowMs()).worked * 60000);
+  const b = document.getElementById('breakTimer');
+  const ob = openBreakOf(clock.data.open);
+  if (b && ob) b.textContent = fmtClockSecs(nowMs() - new Date(ob.start).getTime());
+  voiceCheck();
+}
+
+function applyClockData(data) {
+  clock.data = data;
+  clock.offset = new Date(data.serverNow).getTime() - Date.now();
+  clock.err = '';
+}
+
+async function loadClock() {
+  if (!SESSION || clock.busy) return;
+  try {
+    const res = await fetch('/api/staff-clock', { headers: authHeaders() });
+    const data = await readJson(res);
+    if (res.status === 401) { signOut('Your session ended. Please sign in again.'); return; }
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    applyClockData(data);
+  } catch (err) {
+    if (!clock.data) clock.err = err.message;
+  }
+  renderClock();
+}
+
+// ---- Photo + location, taken at the moment of Clock In / Clock Out ----
+// The location is read once per punch and sent with it — it is never tracked in
+// the background. The photo comes from the live front camera (no photo library).
+function getFix() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("This phone or browser can't share its location. Open this page in Chrome or Safari."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, at: Date.now() }),
+      (err) => reject(new Error(err.code === 1
+        ? 'Location is blocked for this page. Allow location in your browser settings, then try again.'
+        : 'Could not get your location. Go near a window or outside, make sure Location is on, and try again.')),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+    );
+  });
+}
+
+// Full-screen front camera. Resolves with a small JPEG data URL, or null if cancelled.
+function takeSelfie(buttonLabel) {
+  return new Promise((resolve, reject) => {
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+      reject(new Error("This browser can't open the camera. Open this page in Chrome or Safari (not inside another app) and try again."));
+      return;
+    }
+    let stream = null;
+    const ov = document.createElement('div');
+    ov.className = 'cam-overlay';
+    ov.innerHTML = `<div class="cam-msg" id="camMsg">Starting camera…</div>
+      <video playsinline muted autoplay></video>
+      <div class="cam-actions">
+        <button type="button" class="clock-btn primary" id="camShot" disabled>${esc(buttonLabel)}</button>
+        <button type="button" class="clock-btn" id="camCancel">Cancel</button>
+      </div>`;
+    document.body.appendChild(ov);
+    const video = ov.querySelector('video');
+    const stop = () => { if (stream) stream.getTracks().forEach((t) => t.stop()); ov.remove(); };
+    ov.querySelector('#camCancel').addEventListener('click', () => { stop(); resolve(null); });
+    ov.querySelector('#camShot').addEventListener('click', () => {
+      if (!video.videoWidth) return;
+      const w = Math.min(480, video.videoWidth);
+      const h = Math.round((w * video.videoHeight) / video.videoWidth);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(video, 0, 0, w, h);
+      const url = c.toDataURL('image/jpeg', 0.6);
+      stop();
+      resolve(url);
+    });
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false })
+      .then((s) => {
+        stream = s;
+        video.srcObject = s;
+        // Only allow the shot once the camera is actually showing a picture.
+        const ready = () => {
+          if (!video.videoWidth) return;
+          ov.querySelector('#camMsg').textContent = 'Look at the camera. Only you should be in the photo.';
+          ov.querySelector('#camShot').disabled = false;
+        };
+        video.addEventListener('loadeddata', ready);
+        video.addEventListener('playing', ready);
+        ready();
+      })
+      .catch((err) => {
+        stop();
+        reject(new Error(err && err.name === 'NotAllowedError'
+          ? 'Camera is blocked for this page. Allow the camera in your browser settings, then try again.'
+          : 'Could not start the camera. Close other apps that use it and try again.'));
+      });
+  });
+}
+
+async function punch(action) {
+  if (clock.busy) return;
+  unlockVoice();
+  if (action === 'out' && !confirm('Clock out now?')) return;
+  clock.busy = true;
+  clock.err = '';
+  renderClock();
+  try {
+    const payload = { action };
+    if (action === 'in' || action === 'out') {
+      const needLoc = !!(clock.data && clock.data.locationRequired);
+      // Start asking for location right away so it is ready when the photo is taken.
+      const fixP = needLoc ? getFix() : null;
+      if (fixP) fixP.catch(() => {});
+      const photo = await takeSelfie(action === 'in' ? 'Take photo & clock in' : 'Take photo & clock out');
+      if (!photo) { clock.busy = false; renderClock(); return; }
+      payload.photo = photo;
+      if (needLoc) {
+        let fix = await fixP;
+        if (Date.now() - fix.at > 60000) fix = await getFix(); // camera sat open a while — take a fresh reading
+        payload.position = { lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy };
+      }
+    }
+    const res = await fetch('/api/staff-clock', {
+      method: 'POST',
+      headers: authHeaders(true),
+      body: JSON.stringify(payload),
+    });
+    const data = await readJson(res);
+    if (res.status === 401) { signOut('Your session ended. Please sign in again.'); return; }
+    if (!res.ok) {
+      const e = new Error(data.error || `Request failed (${res.status})`);
+      e.code = data.code;
+      throw e;
+    }
+    const before = clock.data;
+    applyClockData(data);
+    clock.busy = false;
+    afterPunch(data, before);
+  } catch (err) {
+    clock.err = err.message;
+    clock.busy = false;
+    if (err.code === 'consent_required') { await loadClock(); return; }
+  }
+  renderClock();
+}
+
+async function giveConsent() {
+  if (clock.busy) return;
+  if (!clock.tick) { clock.err = 'Tick the box to agree first.'; renderClock(); return; }
+  clock.busy = true;
+  clock.err = '';
+  renderClock();
+  try {
+    const res = await fetch('/api/staff-clock', {
+      method: 'POST',
+      headers: authHeaders(true),
+      body: JSON.stringify({ action: 'consent', version: clock.data.consentVersion }),
+    });
+    const data = await readJson(res);
+    if (res.status === 401) { signOut('Your session ended. Please sign in again.'); return; }
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    applyClockData(data);
+  } catch (err) {
+    clock.err = err.message;
+  }
+  clock.busy = false;
+  renderClock();
+  if (clock.autoPunchAfterConsent && clock.data && clock.data.consented) { clock.autoPunchAfterConsent = false; punch('in'); }
+}
+
+function consentHtml(d) {
+  return `<div class="consent-box">
+    <b>Before you clock in or out</b>
+    <ul>
+      <li>When you tap Clock In or Clock Out, the app takes a photo of you with your phone's camera.</li>
+      <li>If your employer has set the home's location, your phone's location is checked too — once, at that moment only. It is never tracked in the background.</li>
+      <li>Your employer can see the photo and how far from the home you were. It is used only to confirm that you are the person clocking in or out, at the home. No face scan or face matching is done.</li>
+      <li>Photos are deleted after ${esc(d.photoDays || 90)} days. Your hours stay on your timesheet. Nothing is sold or shared. <a href="/privacy.html" target="_blank" rel="noopener">Privacy policy</a></li>
+      <li>If you don't agree, don't tick the box — tell your admin.</li>
+    </ul>
+    <label><input type="checkbox" id="consentOk" ${clock.tick ? 'checked' : ''} /> I understand and agree</label>
+    <button type="button" class="clock-btn primary" data-consent="1" ${clock.busy ? 'disabled' : ''}>Continue</button>
+  </div>`;
+}
+
+function afterPunch(data, before) {
+  const now = nowMs();
+  if (data.notice === 'clocked_in' && data.open) {
+    telloSay(`Clocked in at ${fmtTime(data.open.clock_in)}. Have a great shift.`);
+    if (KIOSK) setTimeout(() => { if (SESSION) signOut('You are clocked in. Have a great shift!'); }, 10000);
+  } else if (data.notice === 'break_started' && data.open) {
+    const b = data.open.breaks[data.open.breaks.length - 1];
+    telloSay(`${b.label} started. You have ${fmtDur(b.allowed)}.`);
+  } else if (data.notice === 'break_ended' && data.open) {
+    const b = data.open.breaks[data.open.breaks.length - 1];
+    const actual = (new Date(b.end) - new Date(b.start)) / 60000;
+    const over = Math.round(actual - b.allowed);
+    telloSay(over >= 1
+      ? `Welcome back. Your ${b.label.toLowerCase()} was ${fmtDur(actual)}, ${fmtDur(over)} over the ${fmtDur(b.allowed)} allowed. That is recorded on your timesheet.`
+      : 'Welcome back.');
+  } else if (data.notice === 'clocked_out') {
+    const prev = before && before.open;
+    const done = prev && (data.entries || []).find((x) => x.id === prev.id);
+    const st = done ? entryStats(done, now) : null;
+    telloSay(`Clocked out at ${done ? fmtTime(done.clock_out) : 'now'}.${st ? ` Total recorded: ${fmtDur(st.worked)}.` : ''} Thank you, goodbye and take care.`, false);
+    if (clock.voiceReady) {
+      try {
+        const u = new SpeechSynthesisUtterance(clock.say);
+        u.lang = 'en-US'; u.rate = 0.95;
+        window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
+      } catch (e) { /* ignore */ }
+    }
+    // Leave the screen signed out after a shift so the next person starts clean.
+    setTimeout(() => { if (SESSION && clock.data && !clock.data.open) signOut('You are clocked out and signed out. Thank you!'); }, KIOSK ? 10000 : 20000);
+  }
+}
+
+function renderClock() {
+  const card = document.getElementById('clockCard');
+  if (!card) return;
+  const d = clock.data;
+  if (!d) {
+    card.innerHTML = `<div class="clock-card"><div class="clock-label">Time clock</div>
+      <div class="clock-sub">${clock.err ? '' : 'Loading…'}</div>${clock.err ? `<div class="clock-err">${esc(clock.err)}</div>` : ''}</div>`;
+    return;
+  }
+  const now = nowMs();
+  const e = d.open;
+  const ob = openBreakOf(e);
+  let status, sub = '', body = '', actions = '';
+  const nextShift = (d.shifts || []).find((s) => new Date(s.end).getTime() > now);
+  const shiftLine = nextShift
+    ? `Your shift: ${esc(nextShift.homeName)} · ${esc(nextShift.startLabel)}–${esc(nextShift.endLabel)}`
+    : 'No shift with a start and end time on your schedule right now.';
+  const needConsent = !d.consented;
+  if (!e) {
+    status = 'Not clocked in';
+    sub = shiftLine;
+    if (!needConsent) actions = `<button type="button" class="clock-btn primary" data-punch="in" ${clock.busy ? 'disabled' : ''}>Clock In</button>`;
+  } else if (ob) {
+    status = `On ${esc(ob.label.toLowerCase())}`;
+    sub = `${fmtShort(ob.allowed)} allowed · ${ob.paid ? 'paid' : 'unpaid'}`;
+    body = `<div class="clock-timer" id="breakTimer">0:00:00</div><div class="clock-sub">break time so far</div>`;
+    actions = `<button type="button" class="clock-btn primary" data-punch="break_end" ${clock.busy ? 'disabled' : ''}>End break</button>`;
+  } else {
+    status = `Clocked in since ${esc(fmtTime(e.clock_in))}`;
+    sub = e.sched_end ? `Shift ends ${esc(fmtTime(e.sched_end))}` : 'No scheduled end time';
+    body = `<div class="clock-timer" id="clockTimer">0:00:00</div><div class="clock-sub">worked so far (unpaid breaks taken out)</div>`;
+    const def = d.breaks[(e.breaks || []).length];
+    if (def) actions += `<button type="button" class="clock-btn" data-punch="break_start" ${clock.busy ? 'disabled' : ''}>Start ${esc(def.label.toLowerCase())} (${fmtShort(def.minutes)}${def.paid ? '' : ', unpaid'})</button>`;
+    if (!needConsent) actions += `<button type="button" class="clock-btn danger" data-punch="out" ${clock.busy ? 'disabled' : ''}>Clock Out</button>`;
+  }
+  card.innerHTML = `
+    <div class="clock-card">
+      <div class="clock-label">Time clock</div>
+      <div class="clock-status">${status}</div>
+      <div class="clock-sub">${sub}</div>
+      ${body}
+      <div class="clock-actions">${actions}</div>
+      ${needConsent && !ob ? consentHtml(d) : ''}
+      ${clock.err ? `<div class="clock-err">${esc(clock.err)}</div>` : ''}
+      ${clock.say ? `<div class="tello-say" id="telloSay"><b>Tello:</b> ${esc(clock.say)}</div>` : ''}
+      ${clock.voiceReady ? '' : '<button type="button" class="voice-btn" data-voice="1">🔊 Tap to let Tello speak</button>'}
+      <div class="clock-sub" style="margin-top:12px">Times are recorded by the server. Clocking in or out takes a photo${d.locationRequired ? ' and checks your location at that moment' : ''}. Tello speaks while this page is open.</div>
+    </div>`;
+  card.querySelectorAll('[data-punch]').forEach((b) => b.addEventListener('click', () => punch(b.dataset.punch)));
+  const ck = card.querySelector('#consentOk');
+  if (ck) ck.addEventListener('change', () => { clock.tick = ck.checked; });
+  const cb = card.querySelector('[data-consent]');
+  if (cb) cb.addEventListener('click', giveConsent);
+  const vb = card.querySelector('[data-voice]');
+  if (vb) vb.addEventListener('click', () => { unlockVoice(); telloSay('Hi, I am Tello. I will remind you before your shift starts and ends.'); });
+  renderHours();
+  tick();
+}
+
+// ---- My hours: last 14 days, with weekly totals ----
+function localDay(iso, tz) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+}
+function weekStartOf(dayStr) {
+  const [y, m, d] = dayStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7)); // Monday
+  return dt.toISOString().slice(0, 10);
+}
+function fmtDayLabel(dayStr) {
+  const [y, m, d] = dayStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function renderHours() {
+  const host = document.getElementById('hoursCard');
+  const d = clock.data;
+  if (!host || !d) return;
+  const tz = d.timezone;
+  const now = nowMs();
+  const cutoff = now - 14 * 86400000;
+  const rows = (d.entries || []).filter((e) => new Date(e.clock_in).getTime() >= cutoff || !e.clock_out);
+  if (!rows.length) {
+    host.innerHTML = `<div class="hours-card"><h2>My hours</h2><div class="clock-sub">Nothing recorded in the last 14 days.</div></div>`;
+    return;
+  }
+  const weeks = {};
+  rows.forEach((e) => {
+    const day = localDay(e.clock_in, tz);
+    const wk = weekStartOf(day);
+    (weeks[wk] = weeks[wk] || []).push({ e, day, st: entryStats(e, now) });
+  });
+  const html = Object.keys(weeks).sort().reverse().map((wk) => {
+    const list = weeks[wk];
+    const total = list.reduce((a, x) => a + x.st.worked, 0);
+    const items = list.map(({ e, day, st }) => {
+      const flags = [];
+      if (!e.clock_out && now - new Date(e.clock_in).getTime() > 16 * 3600000) flags.push('Still clocked in — please clock out');
+      if (st.over >= 1) flags.push(`Break over by ${Math.round(st.over)} min`);
+      if (e.adjusted_at) flags.push('Adjusted by admin');
+      return `<div class="hours-row">
+        <div><div>${esc(fmtDayLabel(day))}</div>
+          <div class="h-sub">${esc(fmtTime(e.clock_in))} – ${e.clock_out ? esc(fmtTime(e.clock_out)) : '…'}${st.unpaid ? ` · breaks −${fmtShort(st.unpaid)}` : ''}</div>
+          ${flags.map((f) => `<div class="h-flag">${esc(f)}</div>`).join('')}</div>
+        <div style="font-weight:700">${fmtHM(st.worked)}</div>
+      </div>`;
+    }).join('');
+    return `<div class="hours-week"><span>Week of ${esc(fmtDayLabel(wk))}</span><span>${fmtHM(total)}</span></div>${items}`;
+  }).join('');
+  host.innerHTML = `<div class="hours-card"><h2>My hours</h2>${html}
+    <p class="hours-note">Hours are what the clock recorded. Your employer's payroll record is the official one — tell the admin if anything looks wrong.</p></div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Sign-in (employee number + PIN) — the only way in. Staff can only use this
+// page to clock in/out and see their own hours and schedule.
+// ---------------------------------------------------------------------------
+const qs = new URLSearchParams(location.search);
+const ORG_KEY = (qs.get('k') || '').trim();
+if (qs.get('embed') === '1') document.body.classList.add('embed');
+const KIOSK = qs.get('kiosk') === '1';
+let SESSION = '';
+try { SESSION = sessionStorage.getItem('tello-clock-session') || ''; } catch (e) { /* storage blocked */ }
+
+function authHeaders(withJson) {
+  const h = { Authorization: `Bearer ${SESSION}` };
+  if (withJson) h['Content-Type'] = 'application/json';
+  return h;
+}
+
+function signOut(message) {
+  SESSION = '';
+  try { sessionStorage.removeItem('tello-clock-session'); } catch (e) { /* ignore */ }
+  clock.data = null; clock.busy = false; clock.err = ''; clock.say = ''; clock.tick = false; clock.autoPunch = false; clock.autoPunchAfterConsent = false;
+  try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+  renderLogin(message || '');
+}
+
+let ROSTER = null;
+let idleTimer = null;
+function idleReset(fn, ms) { clearTimeout(idleTimer); idleTimer = ms ? setTimeout(fn, ms) : null; }
+function initials(name) {
+  const w = String(name || '').trim().split(/\s+/).filter(Boolean);
+  return ((w[0] || '?')[0] + (w.length > 1 ? w[w.length - 1][0] : '')).toUpperCase();
+}
+function infoBox(message) {
+  return message ? `<div class="clock-info">${esc(message)}</div>` : '';
+}
+
+// Step 1: tap your name (searchable list)
+async function renderLogin(message) {
+  idleReset();
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="clock-card"><div class="clock-label">Tello Staff</div>
+    <div class="clock-status">Who is clocking in?</div>${infoBox(message)}
+    <div class="clock-sub" id="rosterMsg" style="margin-top:12px">Loading names…</div></div>`;
+  if (!ROSTER) {
+    try {
+      const res = await fetch('/api/staff-clock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'roster', key: ORG_KEY }) });
+      const data = await readJson(res);
+      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+      ROSTER = data.staff || [];
+    } catch (e) {
+      content.querySelector('#rosterMsg').outerHTML = `<div class="clock-err">${esc(e.message)}</div>`;
+      return;
+    }
+  }
+  const draw = (q) => {
+    const f = q.trim().toLowerCase();
+    const rows = ROSTER.filter((m) => !f || m.name.toLowerCase().includes(f));
+    document.getElementById('pickList').innerHTML = rows.length
+      ? rows.map((m) => `<button type="button" class="pick-item" data-staff="${esc(m.id)}"><span class="pick-av">${esc(initials(m.name))}</span><span>${esc(m.name)}</span></button>`).join('')
+      : '<div class="clock-sub" style="padding:14px">No one found. Try “Use my employee number”.</div>';
+  };
+  content.innerHTML = `<div class="clock-card"><div class="clock-label">Tello Staff</div>
+    <div class="clock-status">Who is clocking in?</div>${infoBox(message)}
+    <input id="pickSearch" class="pick-search" type="search" placeholder="Search your name" autocomplete="off" />
+    <div id="pickList" class="pick-list"></div>
+    <button type="button" class="link-btn" id="useEmp">Use my employee number instead</button></div>`;
+  draw('');
+  document.getElementById('pickSearch').addEventListener('input', (ev) => draw(ev.target.value));
+  document.getElementById('pickList').addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-staff]');
+    if (!btn) return;
+    const m = ROSTER.find((x) => x.id === btn.dataset.staff);
+    renderPin({ staffId: m.id }, m.name);
+  });
+  document.getElementById('useEmp').addEventListener('click', () => renderEmpEntry(''));
+}
+
+// Step 1 (alternative): type the employee number
+function renderEmpEntry(err) {
+  idleReset(() => renderLogin(''), 30000);
+  document.getElementById('content').innerHTML = `<div class="clock-card"><div class="clock-label">Tello Staff</div>
+    <div class="clock-status">Employee number</div>
+    <form id="empForm" autocomplete="off" style="margin-top:16px;display:flex;flex-direction:column;gap:12px;text-align:left">
+      <label class="login-label">Employee number
+        <input id="loginEmp" type="text" inputmode="numeric" autocomplete="off" maxlength="20" required /></label>
+      <button type="submit" class="clock-btn primary">Next</button>
+    </form>
+    <div class="clock-err">${esc(err)}</div>
+    <button type="button" class="link-btn" id="backList">Back to names</button></div>`;
+  const inp = document.getElementById('loginEmp');
+  inp.focus();
+  document.getElementById('empForm').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const v = inp.value.trim();
+    if (v) renderPin({ empNo: v }, 'Employee ' + v);
+  });
+  document.getElementById('backList').addEventListener('click', () => renderLogin(''));
+}
+
+// Step 2: four-digit PIN keypad
+function renderPin(who, label, err) {
+  let pin = '';
+  let busy = false;
+  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'forgot', '0', 'back'];
+  document.getElementById('content').innerHTML = `<div class="clock-card"><div class="clock-label">${esc(label)}</div>
+    <div class="clock-status">Enter your PIN</div>
+    <div class="pin-dots" id="pinDots"><i></i><i></i><i></i><i></i></div>
+    <div class="clock-err" id="pinErr" style="text-align:center">${esc(err || '')}</div>
+    <div class="keypad">${keys.map((k) => k === 'forgot' ? '<button type="button" class="key small" data-k="forgot">Forgot</button>'
+      : k === 'back' ? '<button type="button" class="key small" data-k="back" aria-label="Delete">⌫</button>'
+      : `<button type="button" class="key" data-k="${k}">${k}</button>`).join('')}</div>
+    <button type="button" class="link-btn" id="pinBack">Not you? Back</button></div>`;
+  const dots = () => document.querySelectorAll('#pinDots i').forEach((el, i) => el.classList.toggle('on', i < pin.length));
+  const back = () => { ROSTER && !who.empNo ? renderLogin('') : renderEmpEntry(''); };
+  idleReset(() => renderLogin(''), 30000);
+  const submit = async () => {
+    busy = true;
+    try {
+      const res = await fetch('/api/staff-clock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login', key: ORG_KEY, ...who, pin }) });
+      const data = await readJson(res);
+      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+      idleReset();
+      SESSION = data.session;
+      try { sessionStorage.setItem('tello-clock-session', SESSION); } catch (e) { /* ignore */ }
+      applyClockData(data);
+      clock.autoPunch = true;
+      document.getElementById('content').innerHTML = '<div class="clock-card"><div class="clock-sub">Signing you in…</div></div>';
+      loadAndRender(null, null);
+    } catch (e2) {
+      renderPin(who, label, e2.message);
+    }
+  };
+  document.querySelector('.keypad').addEventListener('click', (ev) => {
+    const k = ev.target.closest('[data-k]');
+    if (!k || busy) return;
+    idleReset(() => renderLogin(''), 30000);
+    const v = k.dataset.k;
+    if (v === 'back') pin = pin.slice(0, -1);
+    else if (v === 'forgot') { document.getElementById('pinErr').textContent = 'Ask your manager to reset your PIN.'; return; }
+    else if (pin.length < 4) pin += v;
+    dots();
+    if (pin.length === 4) submit();
+  });
+  document.getElementById('pinBack').addEventListener('click', back);
+}
+
+// Step 3: after sign-in the camera opens by itself — tap it and you are clocked in.
+function maybeAutoPunch() {
+  if (!clock.autoPunch || !clock.data) return;
+  clock.autoPunch = false;
+  if (clock.data.open) return; // already clocked in: show the clock card
+  if (clock.data.consented) { punch('in'); }
+  else { clock.autoPunchAfterConsent = true; }
+}
+
+function init() {
+  setInterval(tick, 1000);
+  setInterval(loadClock, 60000); // pick up admin changes and schedule edits
+  if (!ORG_KEY) {
+    renderError('This time clock link is missing its company key. Ask your admin for the Tello Staff clock link.');
+    return;
+  }
+  if (!SESSION) { renderLogin(''); return; }
+  loadAndRender(null, null);
+  loadClock();
+}
+
+init();
+</script>
+</body>
+</html>
