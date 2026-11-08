@@ -378,8 +378,8 @@ async function handleLogin(body, env) {
 }
 
 // Names for the "tap your name" list: only people the admin has given a PIN.
-// Anyone who has this company's clock link can see these names, like the list
-// on a wall tablet — the PIN (5 wrong tries = locked 15 minutes) protects the
+// Anyone who has this company's clock link can see these names, and who is
+// currently clocked in, like the list on a wall tablet — the PIN (5 wrong tries = locked 15 minutes) protects the
 // clock itself.
 async function handleRoster(body, env) {
   const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
@@ -392,7 +392,10 @@ async function handleRoster(body, env) {
   const { data: creds } = await sbGet(`tello_staff_clock_credentials?user_id=eq.${userId}&pin_hash=not.is.null&select=staff_id`, serviceKey);
   const allowed = new Set((Array.isArray(creds) ? creds : []).map((c) => c.staff_id));
   const { data: members } = await sbGet(`tello_staff_members?user_id=eq.${userId}&select=id,name&order=name`, serviceKey);
-  const staff = (Array.isArray(members) ? members : []).filter((m) => allowed.has(m.id)).map((m) => ({ id: m.id, name: m.name }));
+  // Who is on the clock right now (shown as a green dot, like a wall tablet).
+  const { data: openRows } = await sbGet(`tello_staff_clock_entries?user_id=eq.${userId}&clock_out=is.null&select=staff_id`, serviceKey);
+  const onClock = new Set((Array.isArray(openRows) ? openRows : []).map((r) => r.staff_id));
+  const staff = (Array.isArray(members) ? members : []).filter((m) => allowed.has(m.id)).map((m) => ({ id: m.id, name: m.name, in: onClock.has(m.id) }));
   return json({ staff });
 }
 
