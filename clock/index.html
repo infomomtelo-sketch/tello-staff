@@ -112,7 +112,11 @@
   .pick-search { width: 100%; box-sizing: border-box; margin-top: 14px; padding: 14px; font-size: 17px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-family: inherit; }
   .pick-list { margin-top: 10px; max-height: 52vh; overflow-y: auto; text-align: left; border-radius: 12px; }
   .pick-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px; font-size: 17px; background: transparent; border: 0; border-bottom: 1px solid var(--border); color: var(--text); font-family: inherit; cursor: pointer; text-align: left; }
-  .pick-av { width: 38px; height: 38px; border-radius: 50%; background: var(--border); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex: none; }
+  .pick-av { position: relative; width: 38px; height: 38px; border-radius: 50%; background: var(--border); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex: none; }
+  .pick-dot { position: absolute; right: 0; bottom: 0; width: 11px; height: 11px; border-radius: 50%; background: #3fb86b; border: 2px solid var(--bg-card); }
+  .clock-totals { display: flex; justify-content: center; gap: 28px; margin-top: 16px; }
+  .clock-totals div { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); }
+  .clock-totals b { display: block; font-size: 18px; letter-spacing: 0; text-transform: none; color: var(--text); margin-top: 2px; }
   .link-btn { background: none; border: 0; color: var(--text-muted); text-decoration: underline; font-size: 14px; margin-top: 14px; cursor: pointer; font-family: inherit; }
   .pin-dots { display: flex; justify-content: center; gap: 16px; margin: 18px 0 6px; }
   .pin-dots i { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--text-muted); display: block; }
@@ -634,6 +638,7 @@ function renderClock() {
       <div class="clock-status">${status}</div>
       <div class="clock-sub">${sub}</div>
       ${body}
+      ${totalsHtml(d)}
       <div class="clock-actions">${actions}</div>
       ${needConsent && !ob ? consentHtml(d) : ''}
       ${clock.err ? `<div class="clock-err">${esc(clock.err)}</div>` : ''}
@@ -647,6 +652,22 @@ function renderClock() {
   if (cb) cb.addEventListener('click', giveConsent);
   renderHours();
   tick();
+}
+
+// Day and week totals (week starts Monday, same as My hours below).
+function totalsHtml(d) {
+  const tz = d.timezone;
+  const now = nowMs();
+  const today = localDay(new Date(now).toISOString(), tz);
+  const wk = weekStartOf(today);
+  let day = 0, week = 0;
+  (d.entries || []).forEach((e) => {
+    const ld = localDay(e.clock_in, tz);
+    const w = entryStats(e, now).worked;
+    if (ld === today) day += w;
+    if (weekStartOf(ld) === wk) week += w;
+  });
+  return `<div class="clock-totals"><div>Day total<b>${fmtHM(day)}</b></div><div>Week total<b>${fmtHM(week)}</b></div></div>`;
 }
 
 // ---- My hours: last 14 days, with weekly totals ----
@@ -745,22 +766,25 @@ async function renderLogin(message) {
   content.innerHTML = `<div class="clock-card"><div class="clock-label">Tello Staff</div>
     <div class="clock-status">Who is clocking in?</div>${infoBox(message)}
     <div class="clock-sub" id="rosterMsg" style="margin-top:12px">Loading names…</div></div>`;
-  if (!ROSTER) {
+  {
     try {
       const res = await fetch('/api/staff-clock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'roster', key: ORG_KEY }) });
       const data = await readJson(res);
       if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
       ROSTER = data.staff || [];
     } catch (e) {
-      content.querySelector('#rosterMsg').outerHTML = `<div class="clock-err">${esc(e.message)}</div>`;
-      return;
+      // Reloaded every time so the green "clocked in" dots are current; fall back to the last list if offline.
+      if (!ROSTER) {
+        content.querySelector('#rosterMsg').outerHTML = `<div class="clock-err">${esc(e.message)}</div>`;
+        return;
+      }
     }
   }
   const draw = (q) => {
     const f = q.trim().toLowerCase();
     const rows = ROSTER.filter((m) => !f || m.name.toLowerCase().includes(f));
     document.getElementById('pickList').innerHTML = rows.length
-      ? rows.map((m) => `<button type="button" class="pick-item" data-staff="${esc(m.id)}"><span class="pick-av">${esc(initials(m.name))}</span><span>${esc(m.name)}</span></button>`).join('')
+      ? rows.map((m) => `<button type="button" class="pick-item" data-staff="${esc(m.id)}"><span class="pick-av">${esc(initials(m.name))}${m.in ? '<i class="pick-dot" title="Clocked in"></i>' : ''}</span><span>${esc(m.name)}</span></button>`).join('')
       : '<div class="clock-sub" style="padding:14px">No one found. Try “Use my employee number”.</div>';
   };
   content.innerHTML = `<div class="clock-card"><div class="clock-label">Tello Staff</div>
