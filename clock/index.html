@@ -125,6 +125,33 @@
   .key { height: 64px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 26px; font-family: inherit; cursor: pointer; }
   .key.small { font-size: 14px; border: 0; background: transparent; }
   .key:active { background: var(--border); }
+
+  /* ---- Tablet (iPad landscape): date/time on the left, sign-in and clock on the right ---- */
+  .kiosk-left { display: none; }
+  body.kiosk .site-header { display: none; }
+  body.embed .kiosk-left { display: none !important; }
+  @media (min-width: 820px) and (orientation: landscape) {
+    .site-header { display: none; }
+    .kiosk-wrap { display: grid; grid-template-columns: 5fr 7fr; min-height: 100vh; }
+    .kiosk-left {
+      display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 10px;
+      padding: 48px; background: linear-gradient(160deg, #16322a, #1a3a2e); color: #fff; position: relative;
+    }
+    .kl-brand { position: absolute; top: 28px; left: 48px; font-weight: 800; font-size: 18px; }
+    .kl-brand span { color: var(--accent); }
+    .kl-date { font-size: 22px; color: var(--text-muted); font-weight: 600; }
+    .kl-time { font-size: 84px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+    .kl-time small { font-size: 32px; margin-left: 6px; color: var(--text-muted); }
+    .kl-who { margin-top: 28px; display: flex; align-items: center; gap: 16px; font-size: 22px; font-weight: 700; }
+    .kl-who img { width: 120px; height: 120px; border-radius: 16px; object-fit: cover; transform: scaleX(-1); border: 2px solid var(--border); }
+    body.embed .kiosk-wrap { display: block; min-height: 0; }
+    .kiosk-wrap .shift-main { max-width: none; width: 100%; box-sizing: border-box; margin: 0; padding: 40px 48px 64px; overflow-y: auto; max-height: 100vh; }
+    .clock-actions { flex-direction: row; }
+    .clock-actions .clock-btn { flex: 1; }
+    .clock-timer { font-size: 56px; }
+    .keypad { max-width: 380px; }
+    .key { height: 76px; width: 76px; justify-self: center; }
+  }
 </style>
 </head>
 <body>
@@ -135,9 +162,17 @@
   </div>
 </header>
 
-<main class="shift-main">
-  <div id="content" class="shift-state">Loading your schedule…</div>
-</main>
+<div class="kiosk-wrap">
+  <aside class="kiosk-left" aria-hidden="true">
+    <div class="kl-brand">Tello <span>Staff</span></div>
+    <div class="kl-date" id="klDate"></div>
+    <div class="kl-time" id="klTime"></div>
+    <div id="klWho"></div>
+  </aside>
+  <main class="shift-main">
+    <div id="content" class="shift-state">Loading your schedule…</div>
+  </main>
+</div>
 
 <script>
 function esc(str) {
@@ -267,7 +302,7 @@ async function loadAndRender(token, month) {
 // The phone's clock is only used to tick the on-screen timer and to time
 // Tello's reminders (shifted by the server offset so they match). Reminders are
 // shown as text on this page while it is open.
-const clock = { data: null, offset: 0, busy: false, err: '', say: '', tick: false };
+const clock = { data: null, offset: 0, busy: false, err: '', say: '', tick: false, photo: '' };
 const spoken = new Set();
 
 function nowMs() { return Date.now() + clock.offset; }
@@ -384,7 +419,28 @@ function voiceCheck() {
   }
 }
 
+// Left panel (tablet layout): live date + time, and who is signed in.
+function updateLeft() {
+  const tz = clock.data ? clock.data.timezone : undefined;
+  const d = new Date(nowMs());
+  const dEl = document.getElementById('klDate');
+  const tEl = document.getElementById('klTime');
+  if (!dEl || !tEl) return;
+  dEl.textContent = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: tz });
+  const t = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: tz }).split(' ');
+  tEl.innerHTML = `${esc(t[0])}<small>${esc((t[1] || '').toLowerCase())}</small>`;
+  const w = document.getElementById('klWho');
+  const key = clock.data ? `${clock.data.staffName}|${clock.photo ? 1 : 0}` : '';
+  if (w && w.dataset.key !== key) {
+    w.dataset.key = key;
+    w.innerHTML = clock.data
+      ? `<div class="kl-who">${clock.photo ? `<img alt="" src="${clock.photo}" />` : ''}<span>${esc(clock.data.staffName)}</span></div>`
+      : '';
+  }
+}
+
 function tick() {
+  updateLeft();
   if (!clock.data) return;
   const t = document.getElementById('clockTimer');
   if (t && clock.data.open) t.textContent = fmtClockSecs(entryStats(clock.data.open, nowMs()).worked * 60000);
@@ -503,6 +559,7 @@ async function punch(action) {
       const photo = await takeSelfie(action === 'in' ? 'Take photo & clock in' : 'Take photo & clock out');
       if (!photo) { clock.busy = false; renderClock(); return; }
       payload.photo = photo;
+      clock.photo = photo; // shown beside the name until sign-out (this screen only; not stored)
       if (needLoc) {
         let fix = await fixP;
         if (Date.now() - fix.at > 60000) fix = await getFix(); // camera sat open a while — take a fresh reading
@@ -731,6 +788,7 @@ function renderHours() {
 const qs = new URLSearchParams(location.search);
 const ORG_KEY = (qs.get('k') || '').trim();
 if (qs.get('embed') === '1') document.body.classList.add('embed');
+if (qs.get('kiosk') === '1') document.body.classList.add('kiosk');
 const KIOSK = qs.get('kiosk') === '1';
 let SESSION = '';
 try { SESSION = sessionStorage.getItem('tello-clock-session') || ''; } catch (e) { /* storage blocked */ }
@@ -744,7 +802,7 @@ function authHeaders(withJson) {
 function signOut(message) {
   SESSION = '';
   try { sessionStorage.removeItem('tello-clock-session'); } catch (e) { /* ignore */ }
-  clock.data = null; clock.busy = false; clock.err = ''; clock.say = ''; clock.tick = false; clock.autoPunch = false; clock.autoPunchAfterConsent = false;
+  clock.data = null; clock.photo = ''; clock.busy = false; clock.err = ''; clock.say = ''; clock.tick = false; clock.autoPunch = false; clock.autoPunchAfterConsent = false;
   renderLogin(message || '');
 }
 
