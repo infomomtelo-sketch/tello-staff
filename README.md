@@ -158,16 +158,19 @@ Open `index.html` and set `SUPABASE_ANON_KEY` (Supabase → Project Settings →
 API → anon public key) — it ships with a placeholder that will not
 authenticate anyone until replaced.
 
-### 3. Anthropic API key (for Chat)
+### 3. SecondRail API key (for Chat)
 
-`functions/api/chat.js` calls Claude server-side. In Cloudflare Pages →
-Settings → Environment variables → Production, add:
+`functions/api/chat.js` calls Claude through SecondRail
+(secondrail.tello.live), the failover gateway — it routes to OpenRouter, so
+the chat keeps answering even when the Anthropic account is empty (the
+direct Anthropic key failed with "Your credit balance is too low"). In
+Cloudflare Pages → Settings → Environment variables → Production, add:
 
 ```
-ANTHROPIC_API_KEY = sk-ant-...     (type: Secret / Encrypted)
+SECONDRAIL_API_KEY = <your SecondRail key>     (type: Secret / Encrypted)
 ```
 
-**No prefix** — this must NOT be named `VITE_ANTHROPIC_API_KEY` or similar;
+**No prefix** — this must NOT be named `VITE_SECONDRAIL_API_KEY` or similar;
 a prefixed var would be a no-op here anyway since there's no build step to
 inline it, but keep the naming clean. Without this var set, the Chat tab
 will show a clear "not configured on the server" error rather than failing

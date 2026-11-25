@@ -1,9 +1,14 @@
 // Cloudflare Pages Function — POST /api/chat
-// Server-side only: reads ANTHROPIC_API_KEY from the environment (must be set
-// WITHOUT a VITE_/PUBLIC_ prefix so it never reaches the browser bundle).
+// Server-side only: calls SecondRail (https://secondrail.tello.live/v1/messages),
+// the Anthropic-compatible failover gateway — it routes to OpenRouter, so the
+// chat keeps answering even when the Anthropic account is empty. (The direct
+// Anthropic key failed with "Your credit balance is too low to access the
+// Anthropic API" — the key authenticated, the account had no credit.)
+// Reads SECONDRAIL_API_KEY from the environment (must be set WITHOUT a
+// VITE_/PUBLIC_ prefix so it never reaches the browser bundle).
 
 const MODEL = 'claude-opus-5';
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+const SECONDRAIL_URL = 'https://secondrail.tello.live/v1/messages';
 
 const TELLO_IDENTITY = `You are Tello, the operations co-pilot inside Tello Staff — a tool
 a residential care home administrator uses to run day-to-day staffing across her homes.
@@ -30,9 +35,9 @@ export async function onRequestPost({ request, env }) {
     return json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const apiKey = env.ANTHROPIC_API_KEY;
+  const apiKey = env.SECONDRAIL_API_KEY;
   if (!apiKey) {
-    return json({ error: 'ANTHROPIC_API_KEY is not configured on the server' }, 500);
+    return json({ error: 'SECONDRAIL_API_KEY is not configured on the server' }, 500);
   }
 
   const rawMessages = Array.isArray(body?.messages) ? body.messages : [];
@@ -48,9 +53,9 @@ export async function onRequestPost({ request, env }) {
     ? body.context
     : '(no schedule data provided)';
 
-  let anthropicRes;
+  let railRes;
   try {
-    anthropicRes = await fetch(ANTHROPIC_URL, {
+    railRes = await fetch(SECONDRAIL_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -60,21 +65,20 @@ export async function onRequestPost({ request, env }) {
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 1024,
-        output_config: { effort: 'medium' },
         system: `${TELLO_IDENTITY}\n\nCurrent schedule data:\n${context}`,
         messages: turns,
       }),
     });
   } catch (err) {
-    return json({ error: `Could not reach Claude: ${err.message}` }, 502);
+    return json({ error: `Could not reach SecondRail: ${err.message}` }, 502);
   }
 
-  const data = await anthropicRes.json();
+  const data = await railRes.json();
 
   // Surface the real reason (bad key, rate limit) instead of a generic
   // failure string that looks like a model problem.
-  if (!anthropicRes.ok) {
-    return json({ error: data?.error?.message || `Claude API error (${anthropicRes.status})` }, anthropicRes.status);
+  if (!railRes.ok) {
+    return json({ error: data?.error?.message || `SecondRail error (${railRes.status})` }, railRes.status);
   }
 
   const reply = data.content && data.content[0] && data.content[0].text
