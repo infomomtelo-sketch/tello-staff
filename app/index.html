@@ -869,6 +869,43 @@
 </div>
 
 <script>
+/* Title22 hand-off intake (Nov 26, 2026): Title22 opens Tello Staff
+   carrying the user's own Supabase session in the URL fragment
+   (#t22=<url-encoded JSON>) — the same pattern as the Resident Binder.
+   Fragments are never sent to a server. The session is stored where
+   supabase-js already looks, and the fragment is scrubbed from the
+   address bar. The user object is rebuilt from the access token's own
+   claims, never from extra input. No fragment = no change; this app's
+   own sign-in stands untouched. */
+(function () {
+  try {
+    var m = /#t22=([^&]+)/.exec(window.location.hash || "");
+    if (!m) return;
+    var p = JSON.parse(decodeURIComponent(m[1]));
+    if (p && p.access_token && p.refresh_token) {
+      var claims = JSON.parse(atob(p.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      var sess = {
+        access_token: p.access_token,
+        refresh_token: p.refresh_token,
+        expires_at: p.expires_at || claims.exp || 0,
+        expires_in: 3600,
+        token_type: "bearer",
+        user: {
+          id: claims.sub,
+          email: claims.email || "",
+          aud: claims.aud || "authenticated",
+          role: claims.role || "authenticated",
+          app_metadata: claims.app_metadata || {},
+          user_metadata: claims.user_metadata || {}
+        }
+      };
+      if (sess.user.id) window.localStorage.setItem("sb-nwlhsshvqmbhemhxcran-auth-token", JSON.stringify(sess));
+    }
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+  } catch (e) { /* no hand-off — the app's own sign-in stands */ }
+})();
+</script>
+<script>
 // ============================================================================
 // CONFIG — fill in SUPABASE_ANON_KEY (Project Settings → API) before deploying.
 // REDIRECT_URL must stay the exact Cloudflare Pages production URL, since it
